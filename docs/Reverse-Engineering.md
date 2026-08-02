@@ -10,6 +10,12 @@
   - `5354` – NOTIFY
 - Generated a bug report on the phone for Bluetooth investigation.
 
+## Session 2
+
+- Started documenting the project in GitHub alongside the investigation.
+- Updated the architecture and BLE protocol notes in the repository.
+- Confirmed the project direction: build a separate RTR 310 app and reuse ideas only when useful.
+
 ## Notes
 
 - The current evidence suggests that the RTR 310 uses a simple BLE design:
@@ -17,6 +23,7 @@
   - bike to phone: notification packets
 - The exact packet format is not yet documented.
 - The HCI log was not yet extracted from the bug report at this stage.
+- We should continue documenting every discovery in GitHub so nothing is lost.
 
 ## What to do next
 
