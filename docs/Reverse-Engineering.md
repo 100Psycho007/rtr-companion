@@ -8,9 +8,21 @@
 - Found two important characteristics:
   - `5352` – WRITE
   - `5354` – NOTIFY
+- Generated a bug report on the phone for Bluetooth investigation.
+
+## Notes
+
+- The current evidence suggests that the RTR 310 uses a simple BLE design:
+  - phone to bike: write packets
+  - bike to phone: notification packets
+- The exact packet format is not yet documented.
+- The HCI log was not yet extracted from the bug report at this stage.
 
 ## What to do next
 
-- Capture Bluetooth HCI snoop logs while using the official TVS Connect app.
-- Look for writes to `5352` and notifications from `5354`.
-- Map packet contents to features such as navigation, notifications, and music.
+- Build a small Android test app outside the IDE workflow.
+- Connect to the bike.
+- Discover services.
+- Enable notifications on `5354`.
+- Log every notification received.
+- Keep the app passive at first and avoid sending unknown writes.
