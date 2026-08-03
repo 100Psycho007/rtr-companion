@@ -25,3 +25,7 @@ This suggests the protocol is packet-based and likely multiplexes multiple featu
 ## Next step
 
 Capture and document traffic from the official TVS Connect app, then map packet formats to features.
+
+## Workflow note
+
+The project should continue documenting discoveries in GitHub as soon as they are made, so the notes stay in sync with the code.
