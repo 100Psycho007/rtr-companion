@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    FileProvider paths for PacketExporter.
+    Files are written to context.cacheDir/captures/ and shared read-only.
+    No external storage permission needed.
+-->
+<paths>
+    <cache-path name="captures" path="captures/" />
+</paths>
