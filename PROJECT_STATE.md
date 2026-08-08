@@ -7,7 +7,8 @@
 
 ## Current Sprint
 
-**Sprint 3 — Export & Analysis Foundation**
+**Sprint 3 — Export & Analysis Foundation** (completing)
+**Protocol Integrity Correction applied: 2026-08-08**
 
 ---
 
@@ -88,9 +89,12 @@ from real packet data, then begin Sprint 4 (Navigation Compose, UI polish).
 
 ## In Progress
 
-- [ ] Real hardware session — connect to bike, collect packets, save to `captures/`
-- [ ] Update `docs/BLE-Protocol.md` from real capture data
-- [ ] Update `KNOWN_FACTS.md` when new evidence is gathered
+- [x] Real hardware session — connect to bike, collect packets, save to `captures/`
+      (shutdown-burst capture, ignition OFF, 21 packets)
+- [ ] Update `docs/BLE-Protocol.md` from real capture data (KNOWN_FACTS.md done;
+      BLE-Protocol.md still pending)
+- [x] Update `KNOWN_FACTS.md` when new evidence is gathered — packet length, payload
+      range, and checksum byte position corrected in Session 004
 
 ---
 
@@ -102,13 +106,12 @@ Nothing currently blocked.
 
 ## Next Tasks
 
-1. Hardware session: connect to bike, export a capture via the Export button
-2. Save the exported file to `captures/` in the repo
-3. Analyse the capture — look for patterns (header bytes, packet length, type byte)
-4. Update `docs/BLE-Protocol.md` with observations
-5. Promote confirmed hypotheses in `KNOWN_FACTS.md`
-6. Write `docs/sessions/Session-004.md` after hardware session
-7. Sprint 4: introduce Navigation Compose for settings + about screens
+1. Live-ride hardware session (ignition ON) — need many more `0x5F` samples to solve
+   its checksum; single shutdown-burst capture wasn't enough
+2. Attempt to capture the `0x9A`/`0xF2` auth challenge on connect
+3. Update `docs/BLE-Protocol.md` with the corrected packet structure from Session 004
+4. Decode `0x7D` and `0x12` (both static, not yet attempted)
+5. Sprint 4: introduce Navigation Compose for settings + about screens
 
 ---
 
@@ -170,7 +173,7 @@ See full details in `docs/KNOWN_FACTS.md`.
 
 | Module | Key Files | Status |
 |--------|-----------|--------|
-| `ble-core` | `BleConstants`, `RtrScanner`, `RtrGattManager`, models | Stable — Sprint 1 complete |
+| `ble-core` | `BleConstants`, `ProtocolMode`, `RtrScanner`, `RtrGattManager`, `HandshakeManager` (disabled), `PingPacketBuilder` (disabled), models | Stable — PASSIVE mode default |
 | `protocol` | `RawPacket`, `PacketLogger`, `PacketAnalyzer` (stub) | Sprint 3 complete |
 | `app` | `MainActivity`, `MainViewModel`, 3 screens, `PacketExporter` | Sprint 3 complete |
 
@@ -210,7 +213,26 @@ protocol/
 
 ## Recent Changes
 
-- **2026-08-08** — Architecture review: BLE write audit confirmed clean; UUID ASCII
+- **2026-08-08 (Session 005)** — Protocol integrity correction:
+  - All writes to CHAR_WRITE disabled by default (ProtocolMode.PASSIVE)
+  - `ProtocolMode` enum added to ble-core
+  - HandshakeManager and PingPacketBuilder isolated behind EXPERIMENTAL flag
+  - Checksum analysis completed: per-message-type constant C derived for 5 of 6 types
+  - Jupiter formula `255 − sum mod 256` confirmed NOT matching RTR 310 values
+  - 0x5F checksum remains UNRESOLVED
+  - `docs/BLE-Protocol.md` corrected: 19-byte claim removed, now states 20 bytes
+  - `docs/protocol/capture-20260808-150945.md` created — full byte-by-byte analysis
+  - `docs/protocol/PROTOCOL_STATUS.md` created — per-packet confidence tracker
+  - `docs/research/JUPITER_CROSS_REFERENCE.md` created — Jupiter vs RTR 310 separation
+  - `bug report hci/` added to `.gitignore`
+
+- **2026-08-08 (Session 004)** — First hardware capture analysed:
+  - 21 packets from shutdown burst (ignition OFF)
+  - 20-byte frame structure confirmed (corrected from 19)
+  - Checksum at byte 18 confirmed (corrected from byte 17)
+  - 6 message types identified: 0x10, 0x11, 0x12, 0x5F, 0x7D, 0x42(control)
+
+- **2026-08-08 (earlier)** — Architecture review: BLE write audit confirmed clean; UUID ASCII
   speculation removed; README rewritten; Architecture/Security/Testing docs created;
   GitHub hygiene files added; naming consistency enforced (`ble-core` everywhere).
 
@@ -218,4 +240,4 @@ protocol/
 
 ## Last Updated
 
-2026-08-08 — Architecture review complete. Pending hardware capture session.
+2026-08-08 — Session 005: Protocol integrity correction. PASSIVE mode default. All writes to CHAR_WRITE disabled.

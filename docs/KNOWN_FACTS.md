@@ -33,21 +33,51 @@ Facts in this section have been directly and experimentally verified.
 - Service discovery completes successfully after connection
 - CCCD descriptor write to `5354` successfully enables notifications
 - 600ms delay before `discoverServices()` is stable (per Android BLE recommendations)
-- **Bike does NOT send telemetry without authentication handshake** — only shutdown sequences broadcast unconditionally
+- **Bike does NOT send live telemetry during normal connected+running state** — observed directly: app connected, CCCD write succeeded, but no live packets received during the active session. Only a shutdown burst was captured when the bike powered off. This behaviour is *consistent with* an authentication requirement but is not the same as confirming authentication is the cause.
 
-### Packet Structure (from RTR 310 shutdown capture, 2026-08-08)
-- **Fixed length:** every inbound packet is exactly **19 bytes**
+### Packet Structure (from RTR 310 shutdown capture, 2026-08-08 — corrected in Session 004)
+- **Fixed length:** every inbound packet is exactly **20 bytes** (indices 0–19)
+  - Corrected from "19 bytes" — a byte-count script on the raw capture confirms all 21
+    packets are 20 bytes long.
 - **Frame type byte:** `0x5A` = data frame, `0x5B` = control/null frame
 - **Message ID:** byte 1 identifies the data type
-- **Payload:** bytes 2–16 (15 bytes); `0xEA` = empty/null field
-- **Checksum:** byte 17 = additive sum of bytes 2–16, mod 256
-- **Terminator:** byte 18 = always `0xFF`
+- **Payload:** bytes 2–17 (16 bytes); `0xEA` = empty/null field
+  - Corrected from "bytes 2–16" — byte 17 was assumed reserved/fixed but changes
+    (`0xEA`→`0x00`) between the two `0x5F` variants, so it's payload, not reserved.
+- **Checksum (candidate):** byte 18
+  - Corrected from "byte 17" — script comparison of the two `0x11` variants shows
+    the byte that moves in lockstep with the changed data byte is index 18, not 17.
+- **Terminator:** byte 19 = always `0xFF`
 - **Null field value:** `0xEA` for inbound packets
 
-### Checksum Algorithm (verified)
-- Additive sum of payload bytes mod 256
-- Verified: `0x11` packet variants differ by `0x20` in one data byte; checksum differs by exactly `0x20`
-- Equivalent form (from Jupiter RE): `255 - (sum(bytes[0..17]) % 256)`
+### Checksum Algorithm (session 004 + integrity correction pass 2026-08-08)
+
+**Formula confirmed for messages 0x10, 0x11:**
+`checksum = (C − sum(B0..B17)) mod 256` where C is a per-message-type constant.
+
+Verification (from `docs/protocol/capture-20260808-150945.md`):
+- 0x11 pair: B10 changes by −0x20, B18 changes by −0x20 → confirms `(C − sum)` where C=0xC3
+- 0x10: single value only (3 identical packets) → C=0x31 derived, consistent
+
+**Per-message-type constants C (derived from capture):**
+
+| Msg ID | C value | Evidence strength |
+|--------|---------|------------------|
+| 0x10 | 0x31 | Single packet value; consistent |
+| 0x11 | 0xC3 | **Cross-verified against 2 variants** |
+| 0x12 | 0x0B | Single packet value; consistent |
+| 0x5F | UNKNOWN | **UNRESOLVED** — formula fails |
+| 0x7D | 0x99 | Single packet value; consistent |
+| 0x42 | 0x34 | Single packet value; consistent |
+
+**IMPORTANT:** C is NOT a universal constant (0xFF as Jupiter uses). Each message ID
+appears to have its own C. Jupiter's formula `255 − (sum mod 256)` does **not**
+reproduce RTR 310 byte 18 values for any of the observed message types.
+
+**0x5F checksum — UNRESOLVED:** Does not fit `(C − sum) mod 256` with any consistent C.
+Brute-forced all (start, end) sum ranges × constants 0–255. Tested XOR and 5 CRC-8
+polynomials. Zero formulas matched. Likely has a hidden input (frame counter B7 = 0x1E/0x1F
+may feed the checksum separately). Needs live-ride capture to resolve.
 
 ### Message Types Observed (RTR 310 shutdown capture)
 - `0x5A 0x10` — present, static across capture
@@ -71,12 +101,13 @@ Facts in this section have been directly and experimentally verified.
 Facts in this section are plausible based on available evidence but not yet experimentally confirmed on the RTR 310.
 
 ### Authentication Handshake
-- **Authentication is required before live telemetry starts** — confirmed on Jupiter, strongly suspected on RTR 310 based on observed behaviour (no packets during connected+running state, burst at shutdown)
-- **Handshake sequence (Jupiter, likely same on RTR 310):**
+- **Authentication is required before live telemetry starts** — confirmed on Jupiter; STRONGLY SUSPECTED on RTR 310 based on observed behaviour (no live packets during connected+running state), but not confirmed independently
+- **Handshake sequence (Jupiter documented, likely same on RTR 310):**
   1. Bike sends `0x9A 0xF2` + 16 random challenge bytes via NOTIFY
   2. Phone encrypts challenge with AES-128-CTR using shared key
   3. Phone sends `0x9A 0xF1` + encrypted response to WRITE characteristic
-- **Jupiter AES key:** `7A A3 20 4D 16 1D B5 33 F4 EB 20 4F BC D7 3D D4` — may or may not be the same on RTR 310
+- **Jupiter AES key:** `7A A3 20 4D 16 1D B5 33 F4 EB 20 4F BC D7 3D D4` — UNVERIFIED on RTR 310
+- **NO auth packet (`0x9A 0xF2`) was observed** in the 2026-08-08 capture (ignition OFF shutdown burst)
 
 ### Keep-Alive Ping
 - Phone must send `0x5B 0x4A` ping packet continuously to maintain connection and update cluster display

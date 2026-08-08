@@ -30,18 +30,20 @@
 
 ## Packet Structure (All Messages)
 
-Every packet is **exactly 19 bytes** (observed from RTR 310 capture) or **20 bytes**
-(documented in Jupiter RE report for outbound commands). RTR 310 inbound notifications
-observed as 19 bytes.
+Every packet is **exactly 20 bytes** (confirmed from RTR 310 capture 2026-08-08 —
+all 21 packets are 20 bytes). Previous documentation that stated 19 bytes was incorrect
+and has been corrected.
 
-### 19-byte inbound (Bike → Phone, NOTIFY):
+### 20-byte inbound (Bike → Phone, NOTIFY):
 ```
 Byte  0    : Frame type   — 0x5A (data) or 0x5B (control/null)
 Byte  1    : Message ID   — identifies the data type
-Bytes 2–16 : Payload      — 15 bytes; 0xEA = empty/null field
-Byte  17   : Checksum     — additive sum of bytes 2–16, mod 256
-              (equivalent to: 255 - (sum(bytes[0..17]) % 256) per Jupiter RE)
-Byte  18   : Terminator   — always 0xFF
+Bytes 2–17 : Payload      — 16 bytes; 0xEA = empty/null field
+Byte  18   : Checksum     — formula: (C − sum(B0..B17)) mod 256,
+             where C is a per-message-type constant (NOT Jupiter's formula 255 − sum)
+             Confirmed for 0x10 (C=0x31), 0x11 (C=0xC3).
+             UNRESOLVED for 0x5F.
+Byte  19   : Terminator   — always 0xFF
 ```
 
 ### 20-byte outbound (Phone → Bike, WRITE):
@@ -49,7 +51,9 @@ Byte  18   : Terminator   — always 0xFF
 Byte  0    : Start byte   — 0x5A or 0x5B
 Byte  1    : Data ID
 Bytes 2–17 : Payload      — 16 bytes; 0x00 = empty field (outbound uses 0x00 not 0xEA)
-Byte  18   : Checksum     — 255 - (sum(bytes[0..17]) % 256)
+Byte  18   : Checksum     — formula from Jupiter RE: 255 − (sum(B0..B17) mod 256)
+             STATUS: HYPOTHESIS — not verified on RTR 310. Outbound writes are DISABLED
+             in PASSIVE mode.
 Byte  19   : End byte     — always 0xFF
 ```
 
@@ -141,13 +145,15 @@ the cluster display with phone status.
 **Capture conditions:** Bike powering off, app connected passively.
 
 ### Observations
-- All 21 packets are exactly 19 bytes
+- All 21 packets are exactly 20 bytes (corrected from earlier 19-byte claim)
 - All terminate with `0xFF`
-- `0xEA` is the null/empty field value
-- Checksum confirmed additive (verified by matching delta in `0x11` variants)
-- Two packet variants for `0x5F` with byte 7 incrementing by 1 (0x1E → 0x1F) — likely a frame counter or sub-second timestamp
+- `0xEA` is the null/empty field value for inbound packets
+- Checksum confirmed at byte 18 using formula `(C − sum(B0..B17)) mod 256`
+  where C is per-message-type (NOT the Jupiter formula)
+- Two packet variants for `0x5F` with byte 7 incrementing by 1 (0x1E → 0x1F) — confirmed frame counter
 - `0x7D` packets are fully packed (zero `0xEA` bytes) and identical across all 3 occurrences — likely static config or device identity
 - `0x5B 0x42` appears to be a control-channel heartbeat (almost all `0xEA`)
+- Checksum for `0x5F` is **UNRESOLVED** — does not fit simple formula
 
 ### Timing
 - Packet burst spans ~830ms (timestamps 975961 → 976791)

@@ -197,22 +197,23 @@ object BleConstants {
 
     /**
      * Authentication challenge packet ID — sent by bike on NOTIFY after connection.
-     * Full message: [FRAME_DATA] [MSG_AUTH_CHALLENGE] + 16 random bytes + checksum + [PACKET_END]
-     * Source: Jupiter RE documentation.
+     * Full message: [FRAME_AUTH] [MSG_AUTH_CHALLENGE] + 16 random bytes + checksum + [PACKET_END]
+     * Source: Jupiter RE documentation. **NOT YET OBSERVED on RTR 310.**
      */
     const val MSG_AUTH_CHALLENGE: Byte = 0xF2.toByte()
 
     /**
      * Authentication response packet ID — sent by phone on WRITE.
      * Full message: [0x9A] [MSG_AUTH_RESPONSE] + AES-128-CTR encrypted challenge bytes + checksum + [PACKET_END]
-     * Source: Jupiter RE documentation.
+     * Source: Jupiter RE documentation. **UNVERIFIED on RTR 310.**
+     * Writes using this ID are DISABLED in PASSIVE protocol mode.
      */
     const val MSG_AUTH_RESPONSE: Byte = 0xF1.toByte()
 
     /**
      * Authentication frame start byte — used for both challenge and response.
      * Different from the standard [FRAME_DATA] / [FRAME_CONTROL] bytes.
-     * Source: Jupiter RE documentation.
+     * Source: Jupiter RE documentation. **UNVERIFIED on RTR 310.**
      */
     const val FRAME_AUTH: Byte = 0x9A.toByte()
 }

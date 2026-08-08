@@ -7,13 +7,18 @@ import java.util.Calendar
 /**
  * Builds the TVS SmartXonnect keep-alive ping packet (Data ID `0x4A`).
  *
- * ## Purpose
+ * ## Status: HYPOTHESIS — UNVERIFIED on RTR 310
  *
- * The ping packet must be sent to CHAR_WRITE continuously (every ~1 second)
- * to maintain the BLE connection and update the cluster display with the
- * phone's current status (time, battery, signal strength, etc.).
+ * This packet format is derived entirely from the JupiterRideCompanion RE report.
+ * It has NOT been observed or confirmed on the RTR 310.
+ * This class is ONLY invoked when [dev.rtrcompanion.blecore.connection.RtrGattManager]
+ * is in [dev.rtrcompanion.blecore.ProtocolMode.EXPERIMENTAL] mode.
+ * The default mode is PASSIVE — this class is never called.
  *
- * ## Packet Layout (20 bytes, Phone → Bike)
+ * See `docs/research/JUPITER_CROSS_REFERENCE.md` and
+ * `docs/security/BLE_WRITE_AUDIT.md` before enabling.
+ *
+ * ## Packet Layout (20 bytes, Phone → Bike) — from Jupiter RE
  *
  * ```
  * Byte  0  : 0x5B (FRAME_CONTROL)
@@ -35,12 +40,12 @@ import java.util.Calendar
  * Byte 15  : 0x00 (padding)
  * Byte 16  : 0x00 (padding)
  * Byte 17  : Find Me — 0x01 = flash lights + beep, 0x00 = off
- * Byte 18  : Checksum — 255 - (sum(bytes[0..17]) % 256)
+ * Byte 18  : Checksum — formula from Jupiter RE (UNVERIFIED on RTR 310)
  * Byte 19  : 0xFF (PACKET_END)
  * ```
  *
  * Source: JupiterRideCompanion RE report (same TVS SmartXonnect protocol).
- * See `docs/BLE-Protocol.md` for full documentation.
+ * Cross-reference: `docs/research/JUPITER_CROSS_REFERENCE.md`
  */
 object PingPacketBuilder {
 

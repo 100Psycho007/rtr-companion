@@ -9,6 +9,7 @@ import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothProfile
 import android.content.Context
 import dev.rtrcompanion.blecore.BleConstants
+import dev.rtrcompanion.blecore.ProtocolMode
 import dev.rtrcompanion.blecore.auth.HandshakeManager
 import dev.rtrcompanion.blecore.model.ConnectionState
 import dev.rtrcompanion.blecore.model.RtrDevice
@@ -32,21 +33,19 @@ import timber.log.Timber
  *  - Connect to a given [BluetoothDevice]
  *  - Discover services and log them
  *  - Enable notifications on [BleConstants.CHAR_NOTIFY]
- *  - Perform the TVS SmartXonnect authentication handshake (Sprint 4)
- *  - Send periodic keep-alive ping packets to CHAR_WRITE
- *  - Emit raw notification bytes via [packetFlow]
+ *  - Capture all raw notification bytes via [packetFlow]
  *
- * ## Authentication
+ * ## Protocol Mode
  *
- * After notifications are enabled, the bike may send a challenge packet
- * (`0x9A 0xF2`). [HandshakeManager] detects and responds to this challenge.
- * Without a successful handshake the bike will not stream live telemetry.
+ * This manager operates in one of two modes controlled by [ProtocolMode]:
  *
- * ## Keep-Alive Ping
+ * **PASSIVE (default):** Only enables CCCD notifications. No writes to CHAR_WRITE.
+ * HandshakeManager and PingPacketBuilder are NOT invoked.
+ * A warning is logged at startup.
  *
- * Once the handshake is complete (or if no challenge is received within
- * [HANDSHAKE_TIMEOUT_MS]), periodic ping packets are sent to CHAR_WRITE
- * every [BleConstants.PING_INTERVAL_MS] to maintain the connection.
+ * **EXPERIMENTAL:** Enables the authentication handshake and keep-alive ping.
+ * Only use after verifying the Jupiter AES key and ping format on RTR 310 hardware
+ * via btsnoop HCI log. See docs/security/BLE_WRITE_AUDIT.md.
  *
  * Caller must hold BLUETOOTH_CONNECT permission before calling [connect].
  */
@@ -54,6 +53,7 @@ import timber.log.Timber
 class RtrGattManager(
     private val context: Context,
     private val scope: CoroutineScope,
+    private val protocolMode: ProtocolMode = ProtocolMode.PASSIVE,
 ) {
 
     private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
@@ -160,12 +160,25 @@ class RtrGattManager(
 
             enableNotifications(gatt)
 
-            // Start ping after timeout in case no challenge packet arrives
-            scope.launch {
-                delay(HANDSHAKE_TIMEOUT_MS)
-                if (!handshakeComplete) {
-                    Timber.i("No challenge received — starting ping without handshake")
-                    startPing()
+            // Log protocol mode warning
+            if (protocolMode == ProtocolMode.PASSIVE) {
+                Timber.w("⚠️ Experimental protocol writes disabled (PASSIVE mode). " +
+                    "App is passive: scan → connect → discover → enable notifications → capture. " +
+                    "No writes to CHAR_WRITE (0x5352).")
+            } else {
+                Timber.w("⚠️ EXPERIMENTAL protocol mode active. " +
+                    "Handshake and ping writes are ENABLED. " +
+                    "Jupiter AES key is UNVERIFIED on RTR 310.")
+            }
+
+            // Start ping after timeout only in EXPERIMENTAL mode
+            if (protocolMode == ProtocolMode.EXPERIMENTAL) {
+                scope.launch {
+                    delay(HANDSHAKE_TIMEOUT_MS)
+                    if (!handshakeComplete) {
+                        Timber.i("No challenge received — starting ping without handshake")
+                        startPing()
+                    }
                 }
             }
         }
@@ -283,15 +296,16 @@ class RtrGattManager(
     /**
      * Processes a raw notification packet received from CHAR_NOTIFY.
      *
-     * If this is an authentication challenge from the bike, builds and sends the
-     * response. Otherwise emits the packet to [packetFlow] for upstream consumers.
+     * In PASSIVE mode: emits all packets to [packetFlow] without any writes.
+     * In EXPERIMENTAL mode: if this is an authentication challenge, builds and
+     * sends the response; otherwise emits the packet to [packetFlow].
      */
     private fun handlePacket(bytes: ByteArray) {
         val hex = bytes.joinToString(" ") { "%02X".format(it) }
         Timber.d("PKT [%d] %s", bytes.size, hex)
 
-        if (HandshakeManager.isChallenge(bytes)) {
-            Timber.i("HandshakeManager: challenge received, sending response")
+        if (protocolMode == ProtocolMode.EXPERIMENTAL && HandshakeManager.isChallenge(bytes)) {
+            Timber.i("HandshakeManager: challenge received, sending response (EXPERIMENTAL mode)")
             val response = HandshakeManager.buildResponse(bytes)
             if (response != null) {
                 writeToCharWrite(response)
@@ -315,8 +329,16 @@ class RtrGattManager(
      *
      * All writes go through this single method to make auditing straightforward.
      * See `docs/security/BLE_WRITE_AUDIT.md`.
+     *
+     * In [ProtocolMode.PASSIVE] mode this method is a hard no-op — it logs a
+     * warning and returns immediately without writing anything.
      */
     private fun writeToCharWrite(data: ByteArray) {
+        if (protocolMode == ProtocolMode.PASSIVE) {
+            Timber.w("writeToCharWrite: BLOCKED — app is in PASSIVE mode. No writes to CHAR_WRITE.")
+            return
+        }
+
         val currentGatt = gatt ?: run {
             Timber.w("writeToCharWrite: no active GATT connection")
             return

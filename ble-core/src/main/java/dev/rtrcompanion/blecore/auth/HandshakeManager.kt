@@ -9,29 +9,33 @@ import javax.crypto.spec.SecretKeySpec
 /**
  * Manages the TVS SmartXonnect BLE authentication handshake.
  *
- * ## Protocol (from Jupiter RE cross-reference, same service UUID/protocol)
+ * ## Protocol (from Jupiter RE cross-reference — UNVERIFIED on RTR 310)
  *
- * After CCCD notification enable on CHAR_NOTIFY, the bike may send a challenge:
+ * After CCCD notification enable on CHAR_NOTIFY, the bike MAY send a challenge:
  * ```
  * Bike → Phone (NOTIFY):  0x9A 0xF2 [16 random bytes] [checksum] 0xFF
  * Phone → Bike (WRITE):   0x9A 0xF1 [AES-128-CTR encrypted response] [checksum] 0xFF
  * ```
  *
- * ## AES Key Note
+ * **This entire handshake sequence has NOT been observed on the RTR 310.**
+ * It is documented in the Jupiter RE project which shares the same service UUID.
+ * See `docs/research/JUPITER_CROSS_REFERENCE.md`.
+ *
+ * ## AES Key — UNVERIFIED on RTR 310
  *
  * The Jupiter AES-128-CTR key is:
  * `7A A3 20 4D 16 1D B5 33 F4 EB 20 4F BC D7 3D D4`
  *
- * **This key is unverified on the RTR 310.** The RTR 310 may use the same key
- * (same protocol family) or a different one. This will be confirmed via btsnoop
- * log from a TVS Connect session on the RTR 310.
+ * This key MUST NOT be sent to the RTR 310 until confirmed via btsnoop HCI log
+ * from a TVS Connect session connecting to the RTR 310 with ignition ON.
  *
- * See `docs/BLE-Protocol.md` and `docs/KNOWN_FACTS.md` for full context.
+ * ## Safety — DISABLED IN PASSIVE MODE
  *
- * ## Safety
+ * This class is ONLY invoked when [dev.rtrcompanion.blecore.connection.RtrGattManager]
+ * is in [dev.rtrcompanion.blecore.ProtocolMode.EXPERIMENTAL] mode.
+ * The default mode is PASSIVE — no writes to CHAR_WRITE occur.
  *
- * This class only sends the authentication response to CHAR_WRITE (0x5352).
- * No other write commands are sent. See `docs/security/BLE_WRITE_AUDIT.md`.
+ * See `docs/security/BLE_WRITE_AUDIT.md` and `docs/protocol/PROTOCOL_STATUS.md`.
  */
 object HandshakeManager {
 
@@ -136,6 +140,11 @@ object HandshakeManager {
      * Computes the TVS SmartXonnect checksum for a packet.
      *
      * Formula: `255 - (sum(bytes[fromIndex until toIndex]) % 256)`
+     *
+     * **Note:** This formula is used by Jupiter RE. RTR 310 inbound checksums use
+     * a different constant C per message type: `(C - sum(B0..B17)) mod 256`.
+     * The constants differ from 0xFF (Jupiter). This outbound formula has NOT been
+     * verified on RTR 310. Used here for building EXPERIMENTAL outbound packets only.
      *
      * @param packet The packet bytes.
      * @param fromIndex Start index (inclusive).
