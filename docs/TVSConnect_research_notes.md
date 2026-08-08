@@ -120,6 +120,27 @@ The getters for trip distance and trip fuel divide the stored value by `10`.
 
 The class formats current lap and best lap as `MM:SS:MS` strings.
 
+### Apache `5A 18` field map
+`com.tvs.bike.core.protocol.apache.ApacheSpeedOMeter5` shows the parsing layout for the `5A 18` frame:
+
+- `startByte` at position `1`
+- `dataId` at position `2`
+- `engineLoad` at position `3`
+- `accumulatedFuelInjectionTime` at positions `4..5` with length `2`
+- `manifoldAirPressure` at position `6`
+- `barometricPressure` at position `7`
+- `intakeAirTemperature` at position `8`
+- `engineTemperature` at position `9`
+- `fuelInjectionTime` at positions `10..11` with length `2`
+- `batteryVoltage` at position `12`
+- `runTimeSinceEngineStart` at positions `13..14` with length `2`
+- `distanceTraveled` at positions `15..16` with length `2`
+- `fuelInjectionVolume` at positions `17..18` with length `2`
+- `checkSum` at position `19`
+- `endByte` at position `20`
+
+The battery voltage getter multiplies the parsed value by `0.1` and formats it to two decimal places.
+
 ### Apache receiver pipeline
 We also found:
 
@@ -172,10 +193,9 @@ Do not label these as Apache speedometer frames until we find an official mappin
 
 ## Next target files/classes
 
-1. `ApacheSpeedOMeter5`
-2. `ApacheClusterDataReceiver`
-3. `ApacheBleService`
-4. `ApacheMobileToCluster`
+1. `ApacheClusterDataReceiver`
+2. `ApacheBleService`
+3. `ApacheMobileToCluster`
 
 ## Working rule for future notes
 
