@@ -13,6 +13,7 @@
 
 ### Proprietary TVS service
 - `5456534d-5647-5341-5342-454e544f5251`
+  - UUID is experimentally confirmed. Any textual interpretation is speculative and intentionally omitted until verified.
 
 ## Characteristics observed
 

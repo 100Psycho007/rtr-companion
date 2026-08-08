@@ -1,0 +1,20 @@
+# CODEOWNERS
+# Each line specifies a file pattern and the owner(s) of that pattern.
+# Owners are automatically requested for review on PRs that touch matching files.
+# See: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owner for everything
+* @100Psycho007
+
+# BLE core — requires careful review for write safety
+/ble-core/ @100Psycho007
+
+# Protocol — requires evidence-backed changes
+/protocol/ @100Psycho007
+
+# Security documents — always require owner review
+/docs/security/ @100Psycho007
+/docs/KNOWN_FACTS.md @100Psycho007
+
+# CI configuration
+/.github/workflows/ @100Psycho007

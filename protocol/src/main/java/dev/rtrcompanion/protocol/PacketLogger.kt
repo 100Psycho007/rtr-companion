@@ -25,7 +25,12 @@ class PacketLogger(private val maxEntries: Int = 500) {
     val log: StateFlow<List<RawPacket>> = _log.asStateFlow()
 
     /**
-     * Record a new packet. Called from [RtrGattManager.packetFlow] collector.
+     * Record a new packet. Called from a coroutine that collects
+     * [dev.rtrcompanion.blecore.connection.RtrGattManager.packetFlow].
+     *
+     * Thread-safe via [kotlinx.coroutines.flow.MutableStateFlow] value assignment.
+     *
+     * @param packet The raw notification packet received from [BleConstants.CHAR_NOTIFY].
      */
     fun record(packet: RawPacket) {
         Timber.d("LOG [%d bytes] %s", packet.bytes.size, packet.hex)

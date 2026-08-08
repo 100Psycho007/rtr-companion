@@ -5,6 +5,18 @@
 
 ---
 
+## Current Sprint: Sprint 3 — Export & Analysis Foundation 🔄 In Progress
+
+| Task | Status |
+|------|--------|
+| Packet export (share as `.txt`) | ✅ Done |
+| `PacketAnalyzer` skeleton | ✅ Done |
+| All documentation caught up | ✅ Done |
+| Real hardware capture session | ⏳ Pending |
+| Update `docs/BLE-Protocol.md` from captures | ⏳ Pending |
+
+---
+
 ## Sprint 0 — Environment & Discovery ✅ Done
 
 **Goal:** Working project structure and initial BLE discovery.
@@ -46,12 +58,14 @@
 
 **Goal:** Users can export captures. Analysis infrastructure laid out.
 
-- [ ] Packet export — share captured session as `.txt` file
-- [ ] `PacketAnalyzer` skeleton — interface defined, no decoding yet
+- [x] Packet export — share captured session as `.txt` file
+- [x] `PacketAnalyzer` skeleton — interface defined, no decoding yet
+- [x] Documentation catch-up — PROJECT_STATE, KNOWN_FACTS, ROADMAP, sessions, ADRs
+- [x] Architecture review — BLE write audit, naming consistency, UUID docs
 - [ ] Real hardware capture session — connect to bike, collect packets
-- [ ] `captures/` — add at least one real session file
+- [ ] Save capture to `captures/` directory
 - [ ] Protocol documentation — update `docs/BLE-Protocol.md` from capture data
-- [ ] `docs/sessions/Session-003.md` — log the hardware session
+- [ ] `docs/sessions/Session-004.md` — log the hardware session
 
 ---
 
@@ -75,11 +89,11 @@
 
 > **Prerequisite:** Sufficient capture data to reverse-engineer at least one message type.
 
-- [ ] Define `ParsedPacket` sealed class for known message types
+- [ ] Define `ParsedPacket` sealed class subtypes for known message types
 - [ ] Implement parser for first confirmed message type
 - [ ] Add typed packet display to `PacketLogScreen`
 - [ ] Document all decoded fields in `docs/BLE-Protocol.md`
-- [ ] Update `KNOWN_FACTS.md` — move hypotheses to confirmed
+- [ ] Update `KNOWN_FACTS.md` — promote confirmed hypotheses
 
 ---
 
@@ -100,8 +114,7 @@
 
 **Goal:** Stable SDK, comprehensive documentation, public release.
 
-- [ ] SDK public API finalized and documented
-- [ ] Javadoc / KDoc for all public APIs
+- [ ] SDK public API finalised and documented with full KDoc
 - [ ] Unit tests for protocol parsing
 - [ ] Integration test for BLE scan (mocked)
 - [ ] Release to Google Play open beta
@@ -109,9 +122,9 @@
 
 ---
 
-## Long-Term (Post-Beta)
+## Long-Term Goals (Post-Beta)
 
-- WRITE command support (requires full protocol documentation + safety review)
+- WRITE command support (requires full protocol documentation + safety review per `docs/SECURITY.md`)
 - Support for additional TVS SmartXonnect bikes (Apache 200/300 series)
 - Ride history recording and replay
 - Geofencing / stolen vehicle alerts
@@ -120,8 +133,17 @@
 
 ---
 
+## Version History
+
+| Version | Sprint | Date | Notes |
+|---------|--------|------|-------|
+| 0.1.0 | Sprint 0–3 | 2026-08-08 | Initial release candidate — internal use only |
+
+---
+
 ## What Will Never Be Done
 
 - Sending undocumented write commands to the bike
 - Publishing fake or fabricated packet documentation
 - Reverse-engineering the TVS cloud API (out of scope)
+- Moving hypotheses to Confirmed in `KNOWN_FACTS.md` without experimental evidence

@@ -20,7 +20,7 @@ Facts in this section have been directly and experimentally verified.
 - **0x1801** — Generic Attribute service present
 - **0x180A** — Device Information service present
 - **5456534d-5647-5341-5342-454e544f5251** — Proprietary TVS service present
-  - UUID ASCII decode attempt: `TVSMVGSABENTORQ` — appears to be a TVS branding string
+  - UUID is experimentally confirmed. Any textual interpretation is speculative and intentionally omitted until verified.
 
 ### BLE Characteristics (within TVS proprietary service)
 - **`5352`** — WRITE property — direction: Phone → Bike
@@ -45,15 +45,15 @@ Facts in this section have been directly and experimentally verified.
 Facts in this section are plausible based on available evidence but not yet experimentally confirmed.
 
 ### Protocol Structure
-- **Packet-based protocol** — Evidence: two characteristics (one write, one notify) with binary data
-  - This is typical of multiplexed BLE protocols but the actual framing is unknown
-- **Multiple features multiplexed** — The single NOTIFY characteristic likely carries data for all bike features (speed, RPM, ride mode, etc.) via packet type bytes
+- **Packet-based protocol** — Evidence: two characteristics (one write, one notify) with binary data.
+  This is typical of multiplexed BLE protocols but the actual framing is unknown.
+- **Multiple features multiplexed** — The single NOTIFY characteristic likely carries data for all bike features (speed, RPM, ride mode, etc.) via packet type bytes.
 - **Phone sends commands at startup** — Most BLE protocols require an initialisation exchange. The phone app likely writes to `5352` immediately after connection.
-- **Periodic notifications** — The bike likely sends state packets on a polling interval rather than only on change events
+- **Periodic notifications** — The bike likely sends state packets on a polling interval rather than only on change events.
 
 ### Security
-- **No pairing/bonding required for basic comms** — nRF Connect connected without bonding
-- **May have application-layer authentication** — The TVS app may send a handshake on `5352` that the bike requires before sending data
+- **No pairing/bonding required for basic comms** — nRF Connect connected without bonding.
+- **May have application-layer authentication** — The TVS app may send a handshake on `5352` that the bike requires before sending data.
 
 ---
 
