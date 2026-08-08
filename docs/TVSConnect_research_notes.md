@@ -142,12 +142,29 @@ The class formats current lap and best lap as `MM:SS:MS` strings.
 The battery voltage getter multiplies the parsed value by `0.1` and formats it to two decimal places.
 
 ### Apache receiver pipeline
-We also found:
+We also found `com.tvs.ble.feature.datareceiver.ApacheClusterDataReceiver`, which decrypts incoming bytes, identifies the frame type, and routes Apache frames into the ride/dashboard pipeline.
 
-- `com.tvs.ble.feature.datareceiver.ApacheClusterDataReceiver.parseData(byte[], Function2<byte[], DataFrameType, Unit>)`
-- `com.tvs.bike.core.protocol.apache.ApacheIncomingFrameIdentifier`
+The receiver explicitly:
 
-This confirms that the official app has a dedicated Apache incoming-frame identification and parsing path.
+- decrypts Apache payloads with `BluetoothUtil.INSTANCE.decryptDataForApache(...)` (or `decryptU449Data(...)` for U449/U469 variants)
+- passes the decrypted bytes to `ApacheIncomingFrameIdentifier.identify()`
+- dispatches `5A 10`, `5A 11`, `5A 12`, `5A 16`, `5A 18`, `5A 29`, `5A 54`, `5A 5F`, `5A 7D`, and `5B 42`-style handling through frame-specific branches
+
+`ApacheClusterDataReceiver` keeps separate raw-byte buffers and parser objects for the Apache frame family:
+
+- `DATA_ID_5A_10`
+- `DATA_ID_5A_11`
+- `DATA_ID_5A_12`
+- `DATA_ID_5A_16`
+- `DATA_ID_5A_18`
+
+and instantiates the Apache parser models with `new byte[20]`, which matches the official 20-byte Apache frame model used by the APK.
+
+The receiver also populates an `ApacheBleDataModel` with decoded fields. For example:
+
+- `setSpeedometerDataByte5A12()` fills cruising range, trip distance, trip time, trip mileage, trip fuel, lean angle, wheelie-angle offset, acceleration, torque, overspeed threshold, and overspeed setting.
+- `setSpeedometerDataByte5A16()` fills lap trigger, lap time, best lap, and lap number.
+- `handleSpeedOMeterFrame5A18()` fills engine load, accumulated fuel injection time, manifold pressure, barometric pressure, intake temperature, engine temperature, fuel injection time, battery voltage, runtime since engine start, distance travelled, and fuel injection volume.
 
 ### Apache-specific protocol classes present in the APK
 The APK contains Apache-specific classes and helpers including:
