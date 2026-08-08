@@ -21,10 +21,10 @@ Facts in this section have been directly and experimentally verified.
 - **0x180A** — Device Information service present
 - **5456534d-5647-5341-5342-454e544f5251** — Proprietary TVS service present
   - UUID is experimentally confirmed. Any textual interpretation is speculative and intentionally omitted until verified.
+  - **Cross-reference confirmed:** TVS Jupiter uses the identical service UUID and characteristics (source: github.com/overclock98/JupiterRideCompanion). The RTR 310 and Jupiter share the same TVS SmartXonnect BLE protocol layer.
 
 ### BLE Characteristics (within TVS proprietary service)
 - **`5352`** — WRITE property — direction: Phone → Bike
-  - Short UUID (4-hex digits relative to base UUID)
 - **`5354`** — NOTIFY property — direction: Bike → Phone
   - Notifications successfully enabled via CCCD descriptor write
 
@@ -33,27 +33,80 @@ Facts in this section have been directly and experimentally verified.
 - Service discovery completes successfully after connection
 - CCCD descriptor write to `5354` successfully enables notifications
 - 600ms delay before `discoverServices()` is stable (per Android BLE recommendations)
+- **Bike does NOT send telemetry without authentication handshake** — only shutdown sequences broadcast unconditionally
 
-### Application Behaviour
-- RTR Companion app can scan, connect, discover services, and enable notifications
-- Raw packets are received via `CHAR_NOTIFY` notifications
+### Packet Structure (from RTR 310 shutdown capture, 2026-08-08)
+- **Fixed length:** every inbound packet is exactly **19 bytes**
+- **Frame type byte:** `0x5A` = data frame, `0x5B` = control/null frame
+- **Message ID:** byte 1 identifies the data type
+- **Payload:** bytes 2–16 (15 bytes); `0xEA` = empty/null field
+- **Checksum:** byte 17 = additive sum of bytes 2–16, mod 256
+- **Terminator:** byte 18 = always `0xFF`
+- **Null field value:** `0xEA` for inbound packets
+
+### Checksum Algorithm (verified)
+- Additive sum of payload bytes mod 256
+- Verified: `0x11` packet variants differ by `0x20` in one data byte; checksum differs by exactly `0x20`
+- Equivalent form (from Jupiter RE): `255 - (sum(bytes[0..17]) % 256)`
+
+### Message Types Observed (RTR 310 shutdown capture)
+- `0x5A 0x10` — present, static across capture
+- `0x5A 0x11` — present, near-static (1 byte changes between first and subsequent packets)
+- `0x5A 0x12` — present, static
+- `0x5A 0x5F` — present, **dynamic** — multiple bytes change between occurrences
+- `0x5A 0x7D` — present, fully packed (zero `0xEA` bytes), static
+- `0x5B 0x42` — present, almost all `0xEA`, static
+
+### Protocol Shared with TVS Jupiter (cross-reference confirmed)
+- Service UUID, write/notify characteristics: **identical**
+- Packet framing (`0x5A`/`0x5B` start, `0xFF` end): **identical**
+- Message ID `0x10` (odometer/fuel): **present on both**
+- Message ID `0x11` (service reminder): **present on both**
+- Authentication handshake required: **confirmed on Jupiter, strongly suspected on RTR 310**
 
 ---
 
 ## Hypothesis
 
-Facts in this section are plausible based on available evidence but not yet experimentally confirmed.
+Facts in this section are plausible based on available evidence but not yet experimentally confirmed on the RTR 310.
+
+### Authentication Handshake
+- **Authentication is required before live telemetry starts** — confirmed on Jupiter, strongly suspected on RTR 310 based on observed behaviour (no packets during connected+running state, burst at shutdown)
+- **Handshake sequence (Jupiter, likely same on RTR 310):**
+  1. Bike sends `0x9A 0xF2` + 16 random challenge bytes via NOTIFY
+  2. Phone encrypts challenge with AES-128-CTR using shared key
+  3. Phone sends `0x9A 0xF1` + encrypted response to WRITE characteristic
+- **Jupiter AES key:** `7A A3 20 4D 16 1D B5 33 F4 EB 20 4F BC D7 3D D4` — may or may not be the same on RTR 310
+
+### Keep-Alive Ping
+- Phone must send `0x5B 0x4A` ping packet continuously to maintain connection and update cluster display
+- Ping carries: phone signal bars, battery bars, time, date, temperature, network type
+- `Find Me` flag in byte 17 of ping triggers indicator flash + beep
+
+### Message 0x10 Fields (from Jupiter RE, same message ID)
+- Bytes 3–5: Odometer (UInt24, divide by 10 for km)
+- Byte 6: Fuel level (lower nibble = bars 0–5, upper nibble = reserve flag)
+- Byte 13: Call command from cluster button
+
+### Message 0x5F — Live Telemetry
+- Two variants observed in RTR 310 capture with bytes 8–13 changing
+- Byte 7 increments by 1 between variants (0x1E → 0x1F) — likely frame counter
+- Almost certainly carries live sensor data (speed, RPM, or similar)
+- Not yet decoded — requires capture during active ride with ignition ON
+
+### Message 0x7D
+- Fully packed (no `0xEA` null bytes), identical across all 3 occurrences
+- Likely device identity, firmware version, or static configuration data
+- Not present in Jupiter protocol docs — may be RTR 310 specific
+
+### Ride vs Parked State
+- Ignition OFF: bike sends only shutdown/keepalive packets
+- Ignition ON: bike sends active telemetry (`0x10`, `0x11`, `0x18`, `0x19` per Jupiter RE)
+- Detecting any of `0x10`/`0x11`/`0x18`/`0x19` can distinguish ride from parked state
 
 ### Protocol Structure
-- **Packet-based protocol** — Evidence: two characteristics (one write, one notify) with binary data.
-  This is typical of multiplexed BLE protocols but the actual framing is unknown.
-- **Multiple features multiplexed** — The single NOTIFY characteristic likely carries data for all bike features (speed, RPM, ride mode, etc.) via packet type bytes.
-- **Phone sends commands at startup** — Most BLE protocols require an initialisation exchange. The phone app likely writes to `5352` immediately after connection.
-- **Periodic notifications** — The bike likely sends state packets on a polling interval rather than only on change events.
-
-### Security
-- **No pairing/bonding required for basic comms** — nRF Connect connected without bonding.
-- **May have application-layer authentication** — The TVS app may send a handshake on `5352` that the bike requires before sending data.
+- **Packet-based multiplexed protocol** — single NOTIFY characteristic carries all data types via message ID byte
+- `0xEA` is the explicit null/empty value for inbound fields
 
 ---
 
@@ -61,19 +114,21 @@ Facts in this section are plausible based on available evidence but not yet expe
 
 Facts in this section have been tested and found to be false.
 
-*(Nothing rejected yet — investigation is in early stages)*
+- **"Bike sends live telemetry immediately on connection without handshake"** — REJECTED. Bike connected successfully and CCCD write succeeded, but no live packets were received during active ride. Only shutdown burst received. Authentication handshake is required.
 
 ---
 
 ## Questions to Resolve
 
-1. What is the exact byte structure of a notification packet?
-2. What does the phone send on `5352` immediately after connecting?
-3. Is there a length field, type byte, or checksum in the packets?
-4. What is the notification rate (packets per second)?
-5. Are there separate packet types for different features or is everything in one stream?
-6. What happens if `5352` receives no writes — does the bike still send notifications?
-7. What is the full Device Information service content (manufacturer name, firmware version)?
+1. Is the AES-128-CTR key the same on RTR 310 as Jupiter?
+   → Get btsnoop log: enable HCI snoop, connect TVS Connect to RTR 310, capture
+2. Does the RTR 310 send `0x9A 0xF2` challenge immediately after CCCD enable?
+3. What data does `0x5F` carry? (observed with changing bytes — likely live sensors)
+4. What does `0x7D` carry? (fully packed, static, not in Jupiter docs)
+5. What does `0x12` carry? (static, not in Jupiter docs)
+6. What is the packet rate during active ride (ignition ON)?
+7. Does RTR 310 support navigation HUD (`0x4E`/`0x4F`/`0x50`)?
+8. What is the notification rate for the `0x5F` packet?
 
 ---
 
@@ -82,5 +137,7 @@ Facts in this section have been tested and found to be false.
 | Source | Type | Date |
 |--------|------|------|
 | nRF Connect on OnePlus 12 | Direct hardware observation | Pre-2026-08 |
+| RTR 310 packet capture (shutdown burst) | Direct hardware observation | 2026-08-08 |
+| JupiterRideCompanion RE report (github.com/overclock98/JupiterRideCompanion) | Cross-reference — same protocol | 2026-08-08 |
 | RTR 310 owner's manual | Documentation reference | Pre-2026-08 |
-| Android HCI log | Not yet extracted | Pending |
+| Android HCI log (.cfa format, not yet decoded) | Pending — OnePlus proprietary format | 2026-08-02 |

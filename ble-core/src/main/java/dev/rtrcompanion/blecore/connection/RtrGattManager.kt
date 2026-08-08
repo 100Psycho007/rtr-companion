@@ -9,9 +9,12 @@ import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothProfile
 import android.content.Context
 import dev.rtrcompanion.blecore.BleConstants
+import dev.rtrcompanion.blecore.auth.HandshakeManager
 import dev.rtrcompanion.blecore.model.ConnectionState
 import dev.rtrcompanion.blecore.model.RtrDevice
+import dev.rtrcompanion.blecore.ping.PingPacketBuilder
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -25,13 +28,25 @@ import timber.log.Timber
 /**
  * Manages a single BLE GATT connection to an RTR 310 device.
  *
- * Responsibilities (Sprint 1):
+ * ## Responsibilities
  *  - Connect to a given [BluetoothDevice]
  *  - Discover services and log them
  *  - Enable notifications on [BleConstants.CHAR_NOTIFY]
+ *  - Perform the TVS SmartXonnect authentication handshake (Sprint 4)
+ *  - Send periodic keep-alive ping packets to CHAR_WRITE
  *  - Emit raw notification bytes via [packetFlow]
  *
- * Sprint 2+ will add packet parsing via the `protocol` module.
+ * ## Authentication
+ *
+ * After notifications are enabled, the bike may send a challenge packet
+ * (`0x9A 0xF2`). [HandshakeManager] detects and responds to this challenge.
+ * Without a successful handshake the bike will not stream live telemetry.
+ *
+ * ## Keep-Alive Ping
+ *
+ * Once the handshake is complete (or if no challenge is received within
+ * [HANDSHAKE_TIMEOUT_MS]), periodic ping packets are sent to CHAR_WRITE
+ * every [BleConstants.PING_INTERVAL_MS] to maintain the connection.
  *
  * Caller must hold BLUETOOTH_CONNECT permission before calling [connect].
  */
@@ -55,6 +70,17 @@ class RtrGattManager(
     val packetFlow: SharedFlow<ByteArray> = _packetFlow.asSharedFlow()
 
     private var gatt: BluetoothGatt? = null
+    private var pingJob: Job? = null
+    private var handshakeComplete = false
+
+    /**
+     * Time to wait after enabling notifications before starting ping,
+     * even if no challenge packet is received.
+     *
+     * Some units may not send a challenge but still require the ping
+     * to maintain the connection.
+     */
+    private val HANDSHAKE_TIMEOUT_MS = 3_000L
 
     // -------------------------------------------------------------------------
     // GATT Callback
@@ -62,6 +88,13 @@ class RtrGattManager(
 
     private val gattCallback = object : BluetoothGattCallback() {
 
+        /**
+         * Called when the GATT connection state changes.
+         *
+         * On STATE_CONNECTED: schedules service discovery after a stabilisation delay.
+         * On STATE_DISCONNECTED: releases all resources and resets state.
+         * On error: transitions to [ConnectionState.Error].
+         */
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 Timber.e("Connection state change failed: status=%d newState=%d", status, newState)
@@ -75,8 +108,8 @@ class RtrGattManager(
                     Timber.i("Connected to %s", device.name)
                     _connectionState.value = ConnectionState.Connected(device)
 
-                    // Slight delay recommended by Android BLE documentation before
-                    // requesting service discovery to ensure stable connection.
+                    // Short delay recommended by Android BLE documentation before
+                    // requesting service discovery to ensure a stable connection.
                     scope.launch {
                         delay(BleConstants.SERVICE_DISCOVERY_DELAY_MS)
                         Timber.i("Starting service discovery...")
@@ -87,12 +120,21 @@ class RtrGattManager(
 
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     Timber.i("Disconnected")
+                    stopPing()
                     closeGatt()
+                    handshakeComplete = false
                     _connectionState.value = ConnectionState.Disconnected
                 }
             }
         }
 
+        /**
+         * Called when service discovery completes.
+         *
+         * Logs all discovered services and characteristics, then enables notifications
+         * on CHAR_NOTIFY. After a timeout, starts the ping loop if handshake hasn't
+         * completed (handles bikes that don't send a challenge).
+         */
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 handleError("Service discovery failed", status)
@@ -117,8 +159,23 @@ class RtrGattManager(
             Timber.i("Ready. Enabling notifications on CHAR_NOTIFY...")
 
             enableNotifications(gatt)
+
+            // Start ping after timeout in case no challenge packet arrives
+            scope.launch {
+                delay(HANDSHAKE_TIMEOUT_MS)
+                if (!handshakeComplete) {
+                    Timber.i("No challenge received — starting ping without handshake")
+                    startPing()
+                }
+            }
         }
 
+        /**
+         * Called when a characteristic changes (API < 33, deprecated path).
+         *
+         * Delegates to [handlePacket]. Both this and the API 33+ override are
+         * implemented per ADR-003 to support all API levels from 29 to 35.
+         */
         @Deprecated("Deprecated in API 33")
         override fun onCharacteristicChanged(
             gatt: BluetoothGatt,
@@ -130,7 +187,12 @@ class RtrGattManager(
             }
         }
 
-        // API 33+
+        /**
+         * Called when a characteristic changes (API 33+).
+         *
+         * The value is delivered as a separate parameter, avoiding the race
+         * condition present in the deprecated API. See ADR-003.
+         */
         override fun onCharacteristicChanged(
             gatt: BluetoothGatt,
             characteristic: BluetoothGattCharacteristic,
@@ -139,6 +201,11 @@ class RtrGattManager(
             handlePacket(value)
         }
 
+        /**
+         * Called after a descriptor write completes.
+         *
+         * A successful CCCD write confirms notifications are enabled on CHAR_NOTIFY.
+         */
         override fun onDescriptorWrite(
             gatt: BluetoothGatt,
             descriptor: BluetoothGattDescriptor,
@@ -149,6 +216,25 @@ class RtrGattManager(
                     descriptor.characteristic.uuid.toString().substring(4, 8).uppercase())
             } else {
                 Timber.e("Failed to write CCCD descriptor: status=%d", status)
+            }
+        }
+
+        /**
+         * Called after a characteristic write completes.
+         *
+         * Logs success/failure of handshake response and ping writes.
+         */
+        override fun onCharacteristicWrite(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            status: Int,
+        ) {
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                Timber.d("Write success on %s",
+                    characteristic.uuid.toString().substring(4, 8).uppercase())
+            } else {
+                Timber.e("Write failed on %s: status=%d",
+                    characteristic.uuid.toString().substring(4, 8).uppercase(), status)
             }
         }
     }
@@ -185,14 +271,120 @@ class RtrGattManager(
      * Safe to call in any state.
      */
     fun disconnect() {
+        stopPing()
         gatt?.disconnect()
         // closeGatt() is called in onConnectionStateChange when STATE_DISCONNECTED fires
     }
 
     // -------------------------------------------------------------------------
-    // Internal helpers
+    // Packet handling
     // -------------------------------------------------------------------------
 
+    /**
+     * Processes a raw notification packet received from CHAR_NOTIFY.
+     *
+     * If this is an authentication challenge from the bike, builds and sends the
+     * response. Otherwise emits the packet to [packetFlow] for upstream consumers.
+     */
+    private fun handlePacket(bytes: ByteArray) {
+        val hex = bytes.joinToString(" ") { "%02X".format(it) }
+        Timber.d("PKT [%d] %s", bytes.size, hex)
+
+        if (HandshakeManager.isChallenge(bytes)) {
+            Timber.i("HandshakeManager: challenge received, sending response")
+            val response = HandshakeManager.buildResponse(bytes)
+            if (response != null) {
+                writeToCharWrite(response)
+                handshakeComplete = true
+                startPing()
+            } else {
+                Timber.e("HandshakeManager: failed to build response")
+            }
+            return
+        }
+
+        scope.launch { _packetFlow.emit(bytes) }
+    }
+
+    // -------------------------------------------------------------------------
+    // Write helpers
+    // -------------------------------------------------------------------------
+
+    /**
+     * Writes [data] to CHAR_WRITE (0x5352).
+     *
+     * All writes go through this single method to make auditing straightforward.
+     * See `docs/security/BLE_WRITE_AUDIT.md`.
+     */
+    private fun writeToCharWrite(data: ByteArray) {
+        val currentGatt = gatt ?: run {
+            Timber.w("writeToCharWrite: no active GATT connection")
+            return
+        }
+
+        val service = currentGatt.getService(BleConstants.SERVICE_TVS_PROPRIETARY) ?: run {
+            Timber.e("writeToCharWrite: TVS service not found")
+            return
+        }
+
+        val characteristic = service.getCharacteristic(BleConstants.CHAR_WRITE) ?: run {
+            Timber.e("writeToCharWrite: CHAR_WRITE not found")
+            return
+        }
+
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            currentGatt.writeCharacteristic(
+                characteristic,
+                data,
+                BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT,
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            characteristic.value = data
+            @Suppress("DEPRECATION")
+            currentGatt.writeCharacteristic(characteristic)
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Keep-alive ping
+    // -------------------------------------------------------------------------
+
+    /**
+     * Starts the periodic keep-alive ping coroutine.
+     *
+     * Sends a [PingPacketBuilder] packet to CHAR_WRITE every
+     * [BleConstants.PING_INTERVAL_MS]. Safe to call multiple times
+     * (stops any existing ping job first).
+     */
+    private fun startPing() {
+        stopPing()
+        Timber.i("Ping: starting keep-alive at %dms interval", BleConstants.PING_INTERVAL_MS)
+        pingJob = scope.launch {
+            while (true) {
+                val ping = PingPacketBuilder.build()
+                writeToCharWrite(ping)
+                delay(BleConstants.PING_INTERVAL_MS)
+            }
+        }
+    }
+
+    /** Stops the keep-alive ping coroutine. */
+    private fun stopPing() {
+        pingJob?.cancel()
+        pingJob = null
+    }
+
+    // -------------------------------------------------------------------------
+    // Notification enable
+    // -------------------------------------------------------------------------
+
+    /**
+     * Enables BLE notifications on CHAR_NOTIFY by writing the CCCD descriptor.
+     *
+     * This is the only CCCD write in the codebase — it enables passive listening
+     * and does not send any data to the bike's application layer.
+     */
     private fun enableNotifications(gatt: BluetoothGatt) {
         val service = gatt.getService(BleConstants.SERVICE_TVS_PROPRIETARY)
         if (service == null) {
@@ -229,14 +421,13 @@ class RtrGattManager(
         }
     }
 
-    private fun handlePacket(bytes: ByteArray) {
-        val hex = bytes.joinToString(" ") { "%02X".format(it) }
-        Timber.d("PKT [%d] %s", bytes.size, hex)
-        scope.launch { _packetFlow.emit(bytes) }
-    }
+    // -------------------------------------------------------------------------
+    // Internal helpers
+    // -------------------------------------------------------------------------
 
     private fun handleError(message: String, status: Int) {
         Timber.e("%s (status=%d)", message, status)
+        stopPing()
         closeGatt()
         _connectionState.value = ConnectionState.Error(message, status)
     }
@@ -254,10 +445,10 @@ class RtrGattManager(
 
     private fun buildPropertyString(props: Int): String {
         val parts = mutableListOf<String>()
-        if (props and BluetoothGattCharacteristic.PROPERTY_READ != 0)   parts += "READ"
-        if (props and BluetoothGattCharacteristic.PROPERTY_WRITE != 0)  parts += "WRITE"
-        if (props and BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0) parts += "NOTIFY"
-        if (props and BluetoothGattCharacteristic.PROPERTY_INDICATE != 0) parts += "INDICATE"
+        if (props and BluetoothGattCharacteristic.PROPERTY_READ != 0)            parts += "READ"
+        if (props and BluetoothGattCharacteristic.PROPERTY_WRITE != 0)           parts += "WRITE"
+        if (props and BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0)          parts += "NOTIFY"
+        if (props and BluetoothGattCharacteristic.PROPERTY_INDICATE != 0)        parts += "INDICATE"
         if (props and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0) parts += "WRITE_NR"
         return if (parts.isEmpty()) "UNKNOWN" else parts.joinToString("|")
     }

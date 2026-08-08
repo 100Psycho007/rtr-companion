@@ -1,88 +1,77 @@
-# BLE Write Audit — Sprint 1 Safety Verification
+# BLE Write Audit
 
-> **Purpose:** Confirm that the RTR Companion application NEVER sends unsolicited
-> packets to CHAR_WRITE (0x5352) during Sprint 1, 2, or 3.
-> This document must be updated whenever any write operation is added or changed.
+> **Purpose:** Track every write operation to every BLE characteristic.
+> This document must be updated before any new write operation is added.
+> See `docs/SECURITY.md` for the safety policy.
 
 ---
 
 ## Audit Scope
 
-All `.kt` source files in the repository were searched for the following patterns:
-
+All `.kt` source files searched for:
 - `writeCharacteristic(`
-- `BluetoothGatt.writeCharacteristic(`
 - `characteristic.setValue(`
 - `BluetoothGattCharacteristic.setValue(`
 - `writeDescriptor(`
-- Any helper that eventually performs a write to a characteristic
+- Any helper that eventually performs a write
 
-Search executed: 2026-08-08
+Last audited: 2026-08-08
 
 ---
 
 ## Findings
 
-### File: `ble-core/src/main/java/dev/rtrcompanion/blecore/connection/RtrGattManager.kt`
+### File: `ble-core/.../connection/RtrGattManager.kt`
 
-| # | Function | Line (approx) | Pattern Found | Purpose | Classification | Action |
-|---|----------|---------------|---------------|---------|---------------|--------|
-| 1 | `enableNotifications()` | ~222 | `gatt.writeDescriptor(descriptor, ENABLE_NOTIFICATION_VALUE)` (API 33+) | Writes the standard CCCD descriptor to enable BLE notifications on CHAR_NOTIFY (0x5354). This is a write to a **descriptor**, not to a characteristic. | **SAFE — CCCD only** | Keep as-is |
-| 2 | `enableNotifications()` | ~227–229 | `descriptor.value = ENABLE_NOTIFICATION_VALUE` + `gatt.writeDescriptor(descriptor)` (API < 33, deprecated path) | Same purpose as #1 via the deprecated API for devices below Android 13. | **SAFE — CCCD only** | Keep as-is |
-
----
-
-## No Writes Found to CHAR_WRITE (0x5352)
-
-A full-text search across all Kotlin source files found **zero calls** to:
-
-- `writeCharacteristic(...)` — not present anywhere
-- `BluetoothGatt.writeCharacteristic(...)` — not present anywhere
-- `characteristic.setValue(...)` — not present anywhere
-- Any utility that wraps characteristic writes — not present
-
-The constant `BleConstants.CHAR_WRITE` is defined in `BleConstants.kt` but is never
-passed to any write operation. It exists solely as a named constant for documentation
-and for future use when the protocol is sufficiently understood.
+| # | Function | Pattern | Characteristic | Purpose | Classification | Action |
+|---|----------|---------|----------------|---------|----------------|--------|
+| 1 | `enableNotifications()` | `gatt.writeDescriptor(descriptor, ENABLE_NOTIFICATION_VALUE)` (API ≥ 33) | CCCD on CHAR_NOTIFY (0x2902) | Enables BLE notifications on CHAR_NOTIFY. Descriptor write only. | **SAFE — CCCD only** | Keep |
+| 2 | `enableNotifications()` | `descriptor.value = ...` + `gatt.writeDescriptor(descriptor)` (API < 33) | CCCD on CHAR_NOTIFY (0x2902) | Same as #1, deprecated API path for API < 33. | **SAFE — CCCD only** | Keep |
+| 3 | `writeToCharWrite()` | `gatt.writeCharacteristic(characteristic, data, ...)` (API ≥ 33) | CHAR_WRITE (0x5352) | Sends handshake response and keep-alive ping. See entries below. | **CONDITIONAL — see #4, #5** | Keep |
+| 4 | `writeToCharWrite()` via `handlePacket()` | Calls `writeToCharWrite(response)` when challenge detected | CHAR_WRITE (0x5352) | Authentication handshake response (`0x9A 0xF1`). Required to unlock telemetry. Documented in ADR-004. | **SAFE — documented, ADR-004** | Keep |
+| 5 | `writeToCharWrite()` via `startPing()` | Calls `writeToCharWrite(ping)` on interval | CHAR_WRITE (0x5352) | Keep-alive ping (`0x5B 0x4A`). Maintains connection, updates cluster display. Documented in `docs/BLE-Protocol.md`. | **SAFE — documented, ADR-004** | Keep |
 
 ---
 
 ## Summary
 
-| Characteristic | UUID | Write Operations Found | Status |
-|---|---|---|---|
-| CHAR_WRITE | 0x5352 | 0 | ✅ Safe — never written |
-| CHAR_NOTIFY | 0x5354 | 0 characteristic writes | ✅ Safe |
-| CCCD on CHAR_NOTIFY | 0x2902 | 2 (descriptor writes only) | ✅ Required — enables notifications |
+| Characteristic | UUID | Write Type | Count | Status |
+|----------------|------|-----------|-------|--------|
+| CCCD on CHAR_NOTIFY | 0x2902 | Descriptor write | 2 (API split) | ✅ Required — enables passive notifications |
+| CHAR_WRITE | 0x5352 | Characteristic write | 2 (handshake + ping) | ✅ Documented — ADR-004, `docs/BLE-Protocol.md` |
 
 ---
 
-## Conclusion
+## Writes to CHAR_WRITE — Detail
 
-**The application is fully passive with respect to CHAR_WRITE (0x5352) during Sprint 1–3.**
+### Handshake Response (`0x9A 0xF1`)
+- **When:** Only when bike sends `0x9A 0xF2` challenge packet
+- **Content:** AES-128-CTR encrypted response to bike challenge
+- **Purpose:** Authenticate the app so bike streams live telemetry
+- **ADR:** ADR-004
+- **Key status:** Jupiter key used as initial attempt — unverified on RTR 310
 
-The only write operations present are CCCD descriptor writes on CHAR_NOTIFY (0x5354),
-which are the standard Android BLE mechanism for enabling notifications. These writes
-target the CCCD descriptor (`00002902-...`), not the characteristic itself, and they
-instruct the peripheral to start sending notifications. This is a standard, safe
-BLE pattern required for passive monitoring.
+### Keep-Alive Ping (`0x5B 0x4A`)
+- **When:** Every 1000ms after handshake (or after 3s timeout if no challenge)
+- **Content:** Phone status (time, battery, signal) — no bike state modification
+- **Purpose:** Maintain BLE connection, update cluster display with phone info
+- **ADR:** ADR-004
+- **Find Me flag:** Byte 17 = `0x00` by default. `0x01` triggers indicator flash — NOT implemented in current code (future feature)
 
 ---
 
 ## Safety Rules (Standing)
 
-1. **Never write to CHAR_WRITE (0x5352)** until the full packet format is documented
-   in `docs/BLE-Protocol.md` and approved via ADR.
-2. **CCCD writes on CHAR_NOTIFY are permitted and required** — they enable passive
-   notification reception with no side effects on the bike.
-3. This document must be re-run as an audit whenever any new BLE write is considered.
-4. Any characteristic write must first be documented in an ADR and reviewed for safety.
+1. **CHAR_WRITE writes are permitted only** for the handshake response and keep-alive ping as documented in ADR-004.
+2. Any new CHAR_WRITE command requires a new ADR and must be added to this table before merging.
+3. CCCD writes on CHAR_NOTIFY are always permitted — they enable passive notification.
+4. Re-run this audit whenever any write operation is added or modified.
 
 ---
 
 ## Re-Audit Trigger
 
-Re-run this audit whenever:
+Re-run whenever:
 - Any `writeCharacteristic`, `writeDescriptor`, or `setValue` call is added
 - A new BLE characteristic is interacted with
-- Sprint 5+ begins implementing write commands
+- Sprint 5+ implements new command types
