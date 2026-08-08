@@ -98,6 +98,28 @@ The battery voltage getter formats the parsed value to one decimal place.
 
 The getters for trip distance and trip fuel divide the stored value by `10`.
 
+### Apache `5A 16` field map
+`com.tvs.bike.core.protocol.apache.ApacheSpeedOMeter4` shows the parsing layout for the `5A 16` frame:
+
+- `startByte` at position `1`
+- `dataId` at position `2`
+- `lapTimeMin` at position `3`
+- `lapTimeSec` at position `4`
+- `lapTimeMSec` at position `5`
+- `lapNumber` at position `6`
+- `bestLapMin` at position `7`
+- `bestLapSeconds` at position `8`
+- `bestLapMilliSeconds` at position `9`
+- `bestLapNumber` at position `10`
+- `lapTrigger` at position `11`
+- `reserve1` through `reserve5` at position `16`
+- `reserve6` at position `17`
+- `reserve7` at position `18`
+- `checkSum` at position `19`
+- `endByte` at position `20`
+
+The class formats current lap and best lap as `MM:SS:MS` strings.
+
 ### Apache receiver pipeline
 We also found:
 
@@ -150,11 +172,10 @@ Do not label these as Apache speedometer frames until we find an official mappin
 
 ## Next target files/classes
 
-1. `ApacheSpeedOMeter4`
-2. `ApacheSpeedOMeter5`
-3. `ApacheClusterDataReceiver`
-4. `ApacheBleService`
-5. `ApacheMobileToCluster`
+1. `ApacheSpeedOMeter5`
+2. `ApacheClusterDataReceiver`
+3. `ApacheBleService`
+4. `ApacheMobileToCluster`
 
 ## Working rule for future notes
 
