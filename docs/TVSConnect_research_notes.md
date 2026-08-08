@@ -75,6 +75,29 @@ The getter for odometer divides the stored value by `10`.
 
 The battery voltage getter formats the parsed value to one decimal place.
 
+### Apache `5A 12` field map
+`com.tvs.bike.core.protocol.apache.ApacheSpeedOMeter3` shows the parsing layout for the `5A 12` frame:
+
+- `startByte` at position `1`
+- `dataId` at position `2`
+- `leanAngle` at position `3`
+- `cruisingRange` at positions `4..5` with length `2`
+- `wheelAngelOffset` at position `6`
+- `acceleration` at position `7`
+- `torque` at position `8`
+- `tripDistance` at positions `9..10` with length `2`
+- `tripTimeHour` at position `11`
+- `tripTimeMin` at position `12`
+- `tripMileage` at position `13`
+- `tripFuel` at positions `14..15` with length `2`
+- `overspeedThreshold` at position `16`
+- `overSpeedSetting` at position `17`
+- `reserve3` at position `18`
+- `checkSum` at position `19`
+- `endByte` at position `20`
+
+The getters for trip distance and trip fuel divide the stored value by `10`.
+
 ### Apache receiver pipeline
 We also found:
 
@@ -127,12 +150,11 @@ Do not label these as Apache speedometer frames until we find an official mappin
 
 ## Next target files/classes
 
-1. `ApacheSpeedOMeter3`
-2. `ApacheSpeedOMeter4`
-3. `ApacheSpeedOMeter5`
-4. `ApacheClusterDataReceiver`
-5. `ApacheBleService`
-6. `ApacheMobileToCluster`
+1. `ApacheSpeedOMeter4`
+2. `ApacheSpeedOMeter5`
+3. `ApacheClusterDataReceiver`
+4. `ApacheBleService`
+5. `ApacheMobileToCluster`
 
 ## Working rule for future notes
 
