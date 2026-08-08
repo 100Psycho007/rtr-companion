@@ -26,6 +26,29 @@ The Apache variant is explicitly wired to its own BLE config class:
 - `0x18` -> `DataFrameType.SPEEDOMETER_DATA_5A_18_FRAME`
 - `0x29` -> `DataFrameType.WIFI_PASSWORD_5A_29_FRAME`
 
+### Apache `5A 10` field map
+`com.tvs.bike.core.protocol.apache.ApacheSpeedOMeter1` shows the parsing layout for the `5A 10` frame:
+
+- `startByte` at position `1`
+- `dataId` at position `2`
+- `speed` at position `3`
+- `odometer` at positions `4..6` with length `3`
+- `fuelLevel` at position `7`
+- `averageSpeed` at position `8`
+- `mileage` at position `9`
+- `topSpeed` at position `10`
+- `throttle` at position `11`
+- `locationTag` at position `12`
+- `switchStatus` also mapped at position `12`
+- `zeroTo60Time` at position `13`
+- `averageMileageDirect` at position `14`
+- `tripFMeter` at positions `15..16` with length `2`
+- `engineRpm` at positions `17..18` with length `2`
+- `checkSum` at position `19`
+- `endByte` at position `20`
+
+The getter for odometer divides the stored value by `10`.
+
 ### Apache receiver pipeline
 We also found:
 
@@ -78,14 +101,13 @@ Do not label these as Apache speedometer frames until we find an official mappin
 
 ## Next target files/classes
 
-1. `ApacheSpeedOMeter1`
-2. `ApacheSpeedOMeter2`
-3. `ApacheSpeedOMeter3`
-4. `ApacheSpeedOMeter4`
-5. `ApacheSpeedOMeter5`
-6. `ApacheClusterDataReceiver`
-7. `ApacheBleService`
-8. `ApacheMobileToCluster`
+1. `ApacheSpeedOMeter2`
+2. `ApacheSpeedOMeter3`
+3. `ApacheSpeedOMeter4`
+4. `ApacheSpeedOMeter5`
+5. `ApacheClusterDataReceiver`
+6. `ApacheBleService`
+7. `ApacheMobileToCluster`
 
 ## Working rule for future notes
 
