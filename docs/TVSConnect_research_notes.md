@@ -49,6 +49,32 @@ The Apache variant is explicitly wired to its own BLE config class:
 
 The getter for odometer divides the stored value by `10`.
 
+### Apache `5A 11` field map
+`com.tvs.bike.core.protocol.apache.ApacheSpeedOMeter2` shows the parsing layout for the `5A 11` frame:
+
+- `startByte` at position `1`
+- `dataId` at position `2`
+- `vehicleDirection2` at position `3`
+- `vehicleState1` at position `4`
+- `serviceReminder` at position `5`
+- `gearPosition` at position `6`
+- `batteryVoltage` at position `7`
+- `softwareVersion` at position `8`
+- `milBlinkCode` / `reserve1` at position `9`
+- `vehicleModel` / `reserve2` at position `10`
+- `vehicleDiagnostics` at position `11`
+- `reserve3` at position `12`
+- `turnIndicatorStatus` at position `13`
+- `tellTaleStatus` / `engineTemperature` / `reserve14` at position `14`
+- `screenMatrix` / `reserve15` at position `15`
+- `vehicleState3` / `reserve16` at position `16`
+- `absMilBlinkCode` / `reserve17` at position `17`
+- `backlightIllumination` / `vehicleMode` at position `18`
+- `checkSum` at position `19`
+- `endByte` at position `20`
+
+The battery voltage getter formats the parsed value to one decimal place.
+
 ### Apache receiver pipeline
 We also found:
 
@@ -101,13 +127,12 @@ Do not label these as Apache speedometer frames until we find an official mappin
 
 ## Next target files/classes
 
-1. `ApacheSpeedOMeter2`
-2. `ApacheSpeedOMeter3`
-3. `ApacheSpeedOMeter4`
-4. `ApacheSpeedOMeter5`
-5. `ApacheClusterDataReceiver`
-6. `ApacheBleService`
-7. `ApacheMobileToCluster`
+1. `ApacheSpeedOMeter3`
+2. `ApacheSpeedOMeter4`
+3. `ApacheSpeedOMeter5`
+4. `ApacheClusterDataReceiver`
+5. `ApacheBleService`
+6. `ApacheMobileToCluster`
 
 ## Working rule for future notes
 
