@@ -26,86 +26,47 @@ The Apache variant is explicitly wired to its own BLE config class:
 - `0x18` -> `DataFrameType.SPEEDOMETER_DATA_5A_18_FRAME`
 - `0x29` -> `DataFrameType.WIFI_PASSWORD_5A_29_FRAME`
 
-### Apache `ParsingMeta` and parser behavior
-`com.tvs.bike.core.annotations.ParsingMeta` defines the metadata used by frame models:
+### Apache `ParsingMeta`
+The `com.tvs.bike.core.annotations.ParsingMeta` annotation defines:
 
-- `frameType()`
-- `start()`
-- `length()` default `1`
-- `min()` default `0`
-- `max()` default `Integer.MAX_VALUE`
-
-`com.tvs.bike.core.protocol.DataParser` is the generic parser that processes these annotations:
-
-- It scans declared fields and keeps only those annotated with `@ParsingMeta`.
-- It reads `start` and `length` from the annotation.
-- `start` is 1-based in the annotation; the parser converts it to `start - 1` for array indexing.
-- It extracts the selected bytes, formats each byte as two uppercase hex characters, concatenates them, and converts the result with `Integer.parseInt(hexString, 16)`.
-- The parser supports fields whose type name is `int`, `long`, `float`, `double`, or `java.lang.String`.
-- For `String`, it decodes the raw byte slice directly to a string.
-- `min` and `max` exist in the annotation, but this parser does not use them.
-
-`com.tvs.bike.core.protocol.BtData` is the raw-frame base class:
-
-- It stores the original `byte[]` unchanged.
-- It exposes the data via `getData()`.
-- It validates the start byte and logs an invalid start-byte warning when needed.
-- It does not itself perform field parsing.
+- `frameType()` -> `FrameParameterType`
+- `start()` -> 1-based start position
+- `length()` -> default `1`
+- `min()` -> default `0`
+- `max()` -> default `Integer.MAX_VALUE`
 
 ### Apache `FrameParameterType`
-`com.tvs.bike.core.protocol.FrameParameterType` contains the field labels used across the TVS protocol, including:
+`com.tvs.bike.core.protocol.FrameParameterType` contains the Apache-related field vocabulary used by the annotated frame models, including:
 
-- `START_BYTE`
-- `DATA_ID`
-- `SPEED`
-- `ODOMETER`
-- `FUEL_LEVEL`
-- `AVERAGE_SPEED`
-- `TOP_SPEED`
-- `THROTTLE_POSITION`
-- `LOCATION_TAG`
-- `SWITCH_STATUS`
-- `TIME_60KMPH`
-- `AVERAGE_MILEAGE`
-- `TRIP_F_METER`
-- `ENGINE_RPM`
-- `CHECKSUM`
-- `END_BYTE`
-- `VEHICLE_STATE`
-- `SERVICE_REMINDER`
-- `BATTERY_VOLTAGE`
-- `SOFTWARE_VERSION`
-- `TURN_INDICATOR_STATUS`
-- `ENGINE_TEMPRATURE`
-- `INTAKE_AIR_TEMPRATURE`
-- `FUEL_INJECTION_TIME`
-- `GEAR_POSITION`
-- `LEAN_ANGLE`
-- `CRUISING_RANGE`
-- `ACCELERATION`
-- `TORQUE`
-- `WHEEL_ANGEL_OFFSET`
-- `TRIP_DISTANCE`
-- `TRIP_TIME_HR`
-- `TRIP_TIME_MIN`
-- `TRIP_MILEAGE`
-- `TRIP_FUEL`
-- `LAP_TIME`
-- `LAP_NUMBER`
-- `BEST_LAP`
-- `LAP_TRIGGER`
-- `ENGINE_LOAD`
-- `ACCUMULATED_FUEL_INJECTION_TIME`
-- `MANIFOLD_AIR_PRESSURE`
-- `BAROMETRIC_PRESSURE`
-- `ENGINE_RUNNING_TIME`
-- `DISTANCE_TRAVELED`
-- `FUEL_INJECTION_VOLUME`
-- `RUN_TIME_SINCE_ENGINE_START`
-- `TELL_TALE_STATUS`
-- `SCREEN_MATRIX`
-- `ABS_MIL_BLINK_CODE`
-- `BYTE_1` through `BYTE_18`
+- `SPEED`, `ODOMETER`, `FUEL_LEVEL`, `AVERAGE_SPEED`, `TOP_SPEED`, `THROTTLE_POSITION`, `LOCATION_TAG`, `SWITCH_STATUS`, `TIME_60KMPH`, `AVERAGE_MILEAGE`, `TRIP_F_METER`, `ENGINE_RPM`, `CHECKSUM`, `END_BYTE`
+- `VEHICLE_STATE`, `VEHICLE_STATE_1`, `VEHICLE_STATE_2`, `VEHICLE_STATE_3`, `SERVICE_REMINDER`, `BATTERY_VOLTAGE`, `SOFTWARE_VERSION`, `VEHICLE_DIAGNOSTICS`, `TURN_INDICATOR_STATUS`, `ENGINE_TEMPRATURE`, `INTAKE_AIR_TEMPRATURE`, `FUEL_INJECTION_TIME`, `GEAR_POSITION`
+- `LEAN_ANGLE`, `CRUISING_RANGE`, `ACCELERATION`, `TORQUE`, `WHEEL_ANGEL_OFFSET`, `TRIP_DISTANCE`, `TRIP_TIME_HR`, `TRIP_TIME_MIN`, `TRIP_MILEAGE`, `TRIP_FUEL`
+- `LAP_TIME`, `LAP_NUMBER`, `BEST_LAP`, `LAP_TRIGGER`
+- `ENGINE_LOAD`, `ACCUMULATED_FUEL_INJECTION_TIME`, `MANIFOLD_AIR_PRESSURE`, `BAROMETRIC_PRESSURE`, `ENGINE_RUNNING_TIME`, `DISTANCE_TRAVELED`, `FUEL_INJECTION_VOLUME`, `RUN_TIME_SINCE_ENGINE_START`
+- `BYTE_1` through `BYTE_18` and other model-specific fields such as `DND_STATE`, `CALL_MUTE_STATE`, `VEHICLE_LOCK_STATE`, `TRUNK_STATE`, `INCOMING_CALL_STATE`, `MUSIC_COMMAND`, and `BATTERY_PERCENTAGE`
+
+### Apache `DataParser`
+`com.tvs.bike.core.protocol.DataParser` is the generic annotation-driven parser used by the frame models.
+
+Confirmed behavior:
+
+- It scans declared fields and keeps only fields annotated with `@ParsingMeta`.
+- `ParsingMeta.start` is converted to 0-based array indexing with `start - 1`.
+- `extractValue()` converts the selected bytes to a hex string and then parses that as base-16 integer.
+- `extractByteArray()` uses `ArraysKt.copyOfRange(...)` with the computed end index.
+- The parser sets the extracted value onto the annotated field by reflection.
+- The code path shown does not use `min()` or `max()`.
+- Strings are decoded directly from the extracted byte array.
+
+### Apache `BtData`
+`com.tvs.bike.core.protocol.BtData` is a raw frame container/base class, not the field decoder.
+
+It:
+
+- stores the raw `byte[]` unchanged
+- exposes it through `getData()`
+- defines abstract `getStartByte()`, `getDataId()`, `setStartByte(int)`, and `setDataId(int)`
+- validates the first byte and logs when the start byte is invalid
 
 ### Apache `5A 10` field map
 `com.tvs.bike.core.protocol.apache.ApacheSpeedOMeter1` shows the parsing layout for the `5A 10` frame:
@@ -226,8 +187,7 @@ The battery voltage getter multiplies the parsed value by `0.1` and formats it t
 We also found:
 
 - `com.tvs.ble.feature.datareceiver.ApacheClusterDataReceiver.parseData(byte[], Function2<byte[], DataFrameType, Unit>)`
-- `com.tvs.bike.core.protocol.apache.ApacheIncomingFrameIdentifier`
-- `com.tvs.ble.feature.datareceiver.BaseClusterDataReceiver.parseData(byte[], Function1<com.tvs.bike.core.protocol.BtData, Unit>)`
+- `com.tvs.ble.feature.datareceiver.ApacheClusterDataReceiver.handleSpeedOMeter(BtData, byte[])`
 
 This confirms that the official app has a dedicated Apache incoming-frame identification and parsing path.
 
@@ -313,7 +273,6 @@ Do not label these as Apache speedometer frames until we find an official mappin
 2. `ApacheBleService`
 3. `ApacheMobileToCluster`
 4. `ApacheSpeedOMeter1` byte layout and getter scaling
-5. `DataParser` and `FrameParameterType` for how annotated fields are converted from raw bytes
 
 ## Working rule for future notes
 
