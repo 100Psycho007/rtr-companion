@@ -5,10 +5,20 @@ package dev.rtrcompanion.blecore.model
  *
  * State machine:
  * ```
- * Disconnected → Connecting → Connected → DiscoveringServices → Ready
+ * Disconnected → Connecting → [Bonding →] Connected → DiscoveringServices → Ready
  * Any state    → Disconnected  (user disconnect or peripheral disconnect)
  * Any state    → Error         (GATT error; caller should disconnect and reset)
  * ```
+ *
+ * The [Bonding] state is only entered on first connection to an unbonded device.
+ * Android pops a system pairing dialog (passkey display/entry) and the GATT stack
+ * pauses until bonding completes. On subsequent connections the device is already
+ * bonded and this state is skipped entirely.
+ *
+ * Source: rtr_auth_logcat.txt (2026-08-15) — `BluetoothPairingDialog` launched with
+ * `android.bluetooth.device.action.PAIRING_REQUEST` via nRF Connect connecting to
+ * the RTR 310 for the first time. Device was already in `getBondedDevices` for all
+ * subsequent connections throughout the log.
  *
  * Emitted by [dev.rtrcompanion.blecore.connection.RtrGattManager.connectionState].
  */
@@ -22,6 +32,22 @@ sealed class ConnectionState {
      * Waiting for [android.bluetooth.BluetoothGattCallback.onConnectionStateChange].
      */
     data object Connecting : ConnectionState()
+
+    /**
+     * The device is not yet bonded. Android has initiated BLE SMP pairing.
+     * A system passkey dialog is being shown to the user.
+     *
+     * This state is only reached on **first-ever connection** to this bike.
+     * Once bonded, Android skips pairing silently on all subsequent connections.
+     *
+     * The app should display a message like:
+     * "Accept the pairing request shown by Android to connect to your bike."
+     *
+     * GATT service discovery will proceed automatically once the OS confirms bonding.
+     *
+     * @param device The device currently being bonded.
+     */
+    data class Bonding(val device: RtrDevice) : ConnectionState()
 
     /**
      * GATT STATE_CONNECTED received. Preparing to discover services.

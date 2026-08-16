@@ -67,6 +67,12 @@ object BleConstants {
      *
      * Enable notifications on this characteristic via the [DESCRIPTOR_CCCD] to receive
      * all packets from the bike. This is the sole data source for the entire app.
+     *
+     * **Confirmed handle values** (from bluetooth_20260802_180111_21384.log):
+     *  - CHAR_NOTIFY attribute handle: **0x0022** (decimal 34)
+     *  - CCCD descriptor handle: **0x0023** (decimal 35)
+     * Source: `oplus_power_gattc_notification_register_notify_internal:
+     *   conn_id=58, char_handle=0x0022, desc_cccd_handle=0x0023`
      */
     val CHAR_NOTIFY: UUID = UUID.fromString("00005354-0000-1000-8000-00805f9b34fb")
 
@@ -105,10 +111,19 @@ object BleConstants {
     /**
      * Interval in milliseconds between keep-alive ping packets sent to the bike.
      *
-     * The TVS SmartXonnect protocol requires continuous pings to maintain the
-     * connection and update the cluster display. Based on Jupiter RE documentation.
+     * **Source: bluetooth_20260802_180111_21384.log (2026-08-02)**
+     * TVS Connect app (`client_if=59,60`) sends `BTA_GATTC_API_WRITE_EVT` to
+     * `xx:xx:xx:xx:22:2d` (RTR 310) at steady-state intervals of ~2000ms:
+     *   19:23:41.099 → 19:23:43.392 → 19:23:45.402 → 19:23:47.390 → 19:23:49.399
+     * This is the confirmed ping interval for TVS Connect on RTR 310.
+     *
+     * Note: The 2026-08-15 logcat showed ~200ms intervals but that was nRF Connect,
+     * not TVS Connect. The 2026-08-02 Oplus BT log from the actual TVS Connect
+     * session is the authoritative source.
+     *
+     * Previous value: 1000ms (from Jupiter RE — wrong for RTR 310).
      */
-    const val PING_INTERVAL_MS = 1_000L
+    const val PING_INTERVAL_MS = 2_000L
 
     // -------------------------------------------------------------------------
     // Protocol constants
@@ -126,9 +141,19 @@ object BleConstants {
     /**
      * Null/empty field value used in **inbound** (Bike → Phone) packets.
      * Fields carrying no data are padded with this value.
-     * Source: observed in RTR 310 shutdown capture (2026-08-08).
+     *
+     * **Also used as the XOR encoding key for ALL packets** (both inbound and
+     * outbound). Every byte in every packet (except the terminator 0xFF) is
+     * XOR-encoded with 0xEA. XOR with 0xEA again to decode.
+     *
+     * Source: btsnoop HCI capture 2026-08-16 — ping packet decode confirmed:
+     * raw `0xEE` XOR `0xEA` = `0x04` (hour field), `0xC4 0xCD` → `0x2E 0x27` = 46:39 (min:sec).
+     * Name fields: `0xAE 0x82 0x8B...` XOR `0xEA` = `"Dhanush K S"`.
      */
     const val INBOUND_NULL: Byte = 0xEA.toByte()
+
+    /** XOR key used to encode/decode all packet payload bytes. Same value as [INBOUND_NULL]. */
+    const val XOR_KEY: Byte = 0xEA.toByte()
 
     // -------------------------------------------------------------------------
     // Message IDs (inbound, Bike → Phone)
@@ -182,14 +207,52 @@ object BleConstants {
     // -------------------------------------------------------------------------
 
     /**
-     * Keep-alive ping / Mobile Data packet.
+     * Keep-alive ping / Mobile Data packet (Data ID `0x4A`).
      * Must be sent every [PING_INTERVAL_MS] to maintain the connection and update
      * the cluster display with phone status (time, battery, signal, etc.).
      *
-     * Also used to trigger the Find Me feature (byte 17 = 0x01).
-     * Source: Jupiter RE documentation.
+     * Also used to trigger the Find Me feature (byte 17 decoded = 0x01).
+     * All bytes XOR-encoded with [XOR_KEY].
+     * Source: btsnoop HCI capture 2026-08-16 — interval ~2s confirmed.
      */
     const val MSG_PING: Byte = 0x4A.toByte()
+
+    /**
+     * User identification packet (Data ID `0x52`).
+     * Sends the registered user's display name from TVS Connect to the bike cluster.
+     * Observed as the **first write** after CCCD enable in the 2026-08-16 btsnoop capture.
+     *
+     * Format: `[0x5B][0x52][name bytes XOR 0xEA, padded to 16 bytes][chk][0xFF]`
+     *
+     * Example: "Dhanush K S" → bytes 2–12 XOR-encoded with 0xEA.
+     * C constant (checksum): `0x10`.
+     *
+     * Source: btsnoop 2026-08-16. First packet written after CCCD = handle 0x0026.
+     */
+    const val MSG_USER_ID: Byte = 0x52.toByte()
+
+    /**
+     * Vehicle name packet (Data ID `0x43`).
+     * Sends the registered vehicle display name to the bike cluster.
+     * Observed 6× in the 2026-08-16 btsnoop capture.
+     *
+     * Format: `[0x5B][0x43][vehicle_name XOR 0xEA, padded to 16 bytes][chk][0xFF]`
+     *
+     * Example: "Tejas" → bytes 2–6 XOR-encoded with 0xEA, bytes 7–17 = 0xEA (null).
+     * C constant (checksum): `0x87`.
+     *
+     * Source: btsnoop 2026-08-16.
+     */
+    const val MSG_VEHICLE_NAME: Byte = 0x43.toByte()
+
+    /**
+     * Unknown outbound packet (Data ID `0x9C`).
+     * Observed once in btsnoop 2026-08-16. Only B2 is non-null (value `0x09` after XOR decode).
+     * Possibly session/slot index. C constant: `0xF6`.
+     *
+     * Status: HYPOTHESIS — purpose unknown.
+     */
+    const val MSG_UNKNOWN_9C: Byte = 0x9C.toByte()
 
     // -------------------------------------------------------------------------
     // Authentication handshake message IDs

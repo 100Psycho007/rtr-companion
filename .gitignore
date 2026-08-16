@@ -9,6 +9,13 @@
 # /captures
 # Bug reports and system dumps must NOT be committed — they contain private device data
 bug report hci/
+bugreport-extracted/
+# Raw HCI logs contain personal/device data — keep local only
+bt-logs/
+*.zip
+*.cfa
+# btsnoop-parsed contains raw TX writes including user name fields — keep local
+captures/btsnoop-parsed-20260816.txt
 *.apk
 *.aab
 *.ap_
@@ -24,3 +31,7 @@ release/
 *.jks
 *.keystore
 *.log
+# Kiro IDE files
+.kiro/
+# Kotlin compiler session files
+.kotlin/sessions/

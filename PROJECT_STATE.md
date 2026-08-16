@@ -9,6 +9,7 @@
 
 **Sprint 3 — Export & Analysis Foundation** (completing)
 **Protocol Integrity Correction applied: 2026-08-08**
+**Logcat Analysis Session: 2026-08-15**
 
 ---
 
@@ -106,12 +107,41 @@ Nothing currently blocked.
 
 ## Next Tasks
 
-1. Live-ride hardware session (ignition ON) — need many more `0x5F` samples to solve
-   its checksum; single shutdown-burst capture wasn't enough
-2. Attempt to capture the `0x9A`/`0xF2` auth challenge on connect
-3. Update `docs/BLE-Protocol.md` with the corrected packet structure from Session 004
-4. Decode `0x7D` and `0x12` (both static, not yet attempted)
-5. Sprint 4: introduce Navigation Compose for settings + about screens
+### Immediate (unblock live-ride telemetry — highest value)
+
+1. **HCI btsnoop capture with ignition ON** ← the single most important thing
+   - Enable developer options → "Bluetooth HCI snoop log" on your phone
+   - Open TVS Connect, connect to bike with **ignition ON**
+   - Let it run for 30+ seconds while riding or just with ignition on
+   - Pull the btsnoop log: `adb bugreport` then extract `FS/data/misc/bluetooth/logs/btsnoop_hci.log`
+   - Open in Wireshark (filter: `btle`) and look for:
+     - `0x9A 0xF2` — confirms auth challenge exists on RTR 310
+     - `0x9A 0xF1` — confirms the AES key (compare encrypted bytes)
+     - `0x5B 0x4A` — confirms ping format and content
+     - New message IDs not seen in shutdown capture (speed, RPM, 0x18/0x19)
+   - This one capture answers questions 1–5 in KNOWN_FACTS.md simultaneously
+
+2. **Decode `0x5F` checksum** — needs many live-ride samples (frame counter B7
+   increments so the checksum changes every packet). A 30-second ride should give
+   enough variants to solve the formula by linear algebra.
+
+3. **Decode `0x7D` and `0x12`** — compare against known device facts (VIN, firmware
+   version visible in TVS Connect settings). Static packets so one comparison is enough.
+
+### Code (Sprint 4 prep)
+
+4. **RSSI in RtrDevice** — `RtrScanner` currently sets `rssi = 0`. Wire up actual RSSI
+   from `ScanResult` so the device list shows signal strength.
+
+5. **Auto-reconnect** — add `autoConnect = true` path in `RtrGattManager` so the app
+   reconnects when the bike comes back in range without user action.
+
+6. **Navigation Compose** — Sprint 4 planned item. Replace the manual state routing
+   in `RtrCompanionApp` with `NavController` for settings + about screens.
+
+7. **Session stats overlay** — once connected, show packet rate (pkts/sec),
+   unique message types seen, and session duration in the `PacketLogScreen` header.
+   Straightforward with the data already flowing through `PacketLogger`.
 
 ---
 
@@ -213,7 +243,17 @@ protocol/
 
 ## Recent Changes
 
-- **2026-08-08 (Session 005)** — Protocol integrity correction:
+- **2026-08-15 (Session 006)** — Logcat analysis + bonding support + improved UI:
+  - `BleConstants.PING_INTERVAL_MS` corrected from 1000ms → **200ms** (confirmed from
+    official TVS Connect app logcat: `ApacheMobileToCluster.sendMobileData` fires ~5Hz)
+  - `ConnectionState.Bonding` added — new state for first-time OS-level BLE pairing
+  - `RtrGattManager` now registers `BroadcastReceiver` for `ACTION_BOND_STATE_CHANGED`
+    to surface bonding state to UI and handle pairing rejection/timeout gracefully
+  - `ScanScreen` updated to display "Pairing with X — accept the dialog" during bonding
+  - `PacketLogScreen` upgraded: inline decoded annotations per packet, type-count summary
+    in header, checksum pass/fail indicator, colour-coded rows by known/unknown type
+  - `KNOWN_FACTS.md` updated with pairing findings and official app timing evidence
+  - All changes build clean (`assembleDebug` passes)
   - All writes to CHAR_WRITE disabled by default (ProtocolMode.PASSIVE)
   - `ProtocolMode` enum added to ble-core
   - HandshakeManager and PingPacketBuilder isolated behind EXPERIMENTAL flag
