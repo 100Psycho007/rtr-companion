@@ -7,13 +7,18 @@ import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothProfile
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.Build
 import dev.rtrcompanion.blecore.BleConstants
 import dev.rtrcompanion.blecore.ProtocolMode
 import dev.rtrcompanion.blecore.auth.HandshakeManager
 import dev.rtrcompanion.blecore.model.ConnectionState
 import dev.rtrcompanion.blecore.model.RtrDevice
 import dev.rtrcompanion.blecore.ping.PingPacketBuilder
+import dev.rtrcompanion.blecore.registration.RegistrationPacketBuilder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -31,9 +36,20 @@ import timber.log.Timber
  *
  * ## Responsibilities
  *  - Connect to a given [BluetoothDevice]
+ *  - Handle first-time OS-level BLE bonding (passkey pairing dialog)
  *  - Discover services and log them
  *  - Enable notifications on [BleConstants.CHAR_NOTIFY]
  *  - Capture all raw notification bytes via [packetFlow]
+ *
+ * ## Bonding (first connection only)
+ *
+ * The RTR 310 requires BLE SMP bonding on first connection. Android shows a
+ * system passkey dialog (`BluetoothPairingDialog`). After the user confirms,
+ * Android bonds the devices and the GATT connection resumes automatically.
+ * Subsequent connections are silent — the bond is cached by Android.
+ *
+ * Source: `rtr_auth_logcat.txt` (2026-08-15) — `PAIRING_REQUEST` broadcast
+ * observed triggering `BluetoothPairingDialog` on first nRF Connect connection.
  *
  * ## Protocol Mode
  *
@@ -54,6 +70,8 @@ class RtrGattManager(
     private val context: Context,
     private val scope: CoroutineScope,
     private val protocolMode: ProtocolMode = ProtocolMode.PASSIVE,
+    private val userName: String = RegistrationPacketBuilder.DEFAULT_USER_NAME,
+    private val vehicleName: String = RegistrationPacketBuilder.DEFAULT_VEHICLE_NAME,
 ) {
 
     private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
@@ -72,15 +90,80 @@ class RtrGattManager(
     private var gatt: BluetoothGatt? = null
     private var pingJob: Job? = null
     private var handshakeComplete = false
+    private var pendingDevice: RtrDevice? = null
+
+    /**
+     * Time to wait after CCCD write before sending registration packets.
+     * Gives the descriptor write time to complete and the bike time to process it.
+     */
+    private val REGISTRATION_DELAY_MS = 500L
 
     /**
      * Time to wait after enabling notifications before starting ping,
      * even if no challenge packet is received.
-     *
-     * Some units may not send a challenge but still require the ping
-     * to maintain the connection.
      */
     private val HANDSHAKE_TIMEOUT_MS = 3_000L
+
+    // -------------------------------------------------------------------------
+    // Bond state receiver — handles first-time pairing
+    // -------------------------------------------------------------------------
+
+    /**
+     * Listens for [BluetoothDevice.ACTION_BOND_STATE_CHANGED] to detect when
+     * the OS-level pairing dialog completes.
+     *
+     * On first connection to an unbound RTR 310:
+     * 1. `connectGatt()` triggers the system pairing dialog.
+     * 2. GATT callbacks are suspended while Android handles SMP pairing.
+     * 3. This receiver fires with `BOND_BONDED` when the user confirms.
+     * 4. `onConnectionStateChange` will then fire (or has already fired) and
+     *    service discovery proceeds normally.
+     *
+     * Source: rtr_auth_logcat.txt — `BluetoothPairingDialog` launched with
+     * `android.bluetooth.device.action.PAIRING_REQUEST`.
+     */
+    private val bondReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context, intent: Intent) {
+            if (intent.action != BluetoothDevice.ACTION_BOND_STATE_CHANGED) return
+
+            val device: BluetoothDevice = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
+            } ?: return
+
+            // Only care about our target device
+            val target = pendingDevice ?: return
+            if (device.address != target.address) return
+
+            val bondState = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.BOND_NONE)
+            val prevBondState = intent.getIntExtra(BluetoothDevice.EXTRA_PREVIOUS_BOND_STATE, BluetoothDevice.BOND_NONE)
+
+            Timber.i("Bond state change for %s: %s → %s",
+                target.name,
+                bondStateName(prevBondState),
+                bondStateName(bondState))
+
+            when (bondState) {
+                BluetoothDevice.BOND_BONDING -> {
+                    Timber.i("Bonding in progress — user needs to accept pairing dialog")
+                    _connectionState.value = ConnectionState.Bonding(target)
+                }
+                BluetoothDevice.BOND_BONDED -> {
+                    Timber.i("Bonding complete — GATT will resume automatically")
+                    // GATT onConnectionStateChange will fire shortly; don't change state here
+                    // to avoid a race. Let onConnectionStateChange drive the state forward.
+                }
+                BluetoothDevice.BOND_NONE -> {
+                    if (prevBondState == BluetoothDevice.BOND_BONDING) {
+                        Timber.w("Bonding rejected or timed out — disconnecting")
+                        handleError("Pairing rejected or timed out", 0)
+                    }
+                }
+            }
+        }
+    }
 
     // -------------------------------------------------------------------------
     // GATT Callback
@@ -122,7 +205,9 @@ class RtrGattManager(
                     Timber.i("Disconnected")
                     stopPing()
                     closeGatt()
+                    unregisterBondReceiver()
                     handshakeComplete = false
+                    pendingDevice = null
                     _connectionState.value = ConnectionState.Disconnected
                 }
             }
@@ -160,24 +245,35 @@ class RtrGattManager(
 
             enableNotifications(gatt)
 
-            // Log protocol mode warning
-            if (protocolMode == ProtocolMode.PASSIVE) {
-                Timber.w("⚠️ Experimental protocol writes disabled (PASSIVE mode). " +
-                    "App is passive: scan → connect → discover → enable notifications → capture. " +
-                    "No writes to CHAR_WRITE (0x5352).")
-            } else {
-                Timber.w("⚠️ EXPERIMENTAL protocol mode active. " +
-                    "Handshake and ping writes are ENABLED. " +
-                    "Jupiter AES key is UNVERIFIED on RTR 310.")
+            // Log protocol mode
+            when (protocolMode) {
+                ProtocolMode.PASSIVE -> Timber.w(
+                    "⚠️ PASSIVE mode — no writes to CHAR_WRITE. " +
+                    "Switch to ACTIVE mode to enable live telemetry."
+                )
+                ProtocolMode.ACTIVE -> Timber.i(
+                    "ACTIVE mode — will send registration + ping after CCCD write."
+                )
+                ProtocolMode.EXPERIMENTAL -> Timber.w(
+                    "⚠️ EXPERIMENTAL mode — AES handshake enabled (unverified on RTR 310)."
+                )
             }
 
-            // Start ping after timeout only in EXPERIMENTAL mode
+            // ACTIVE/EXPERIMENTAL: start registration sequence after a short delay
+            // to allow the CCCD descriptor write to complete first.
+            if (protocolMode == ProtocolMode.ACTIVE || protocolMode == ProtocolMode.EXPERIMENTAL) {
+                scope.launch {
+                    delay(REGISTRATION_DELAY_MS)
+                    startRegistration()
+                }
+            }
+
+            // EXPERIMENTAL only: also set up handshake timeout fallback
             if (protocolMode == ProtocolMode.EXPERIMENTAL) {
                 scope.launch {
                     delay(HANDSHAKE_TIMEOUT_MS)
                     if (!handshakeComplete) {
-                        Timber.i("No challenge received — starting ping without handshake")
-                        startPing()
+                        Timber.i("No challenge received — handshake not needed, ping already running")
                     }
                 }
             }
@@ -259,6 +355,9 @@ class RtrGattManager(
     /**
      * Connect to a discovered RTR 310 device.
      *
+     * Registers a bond state receiver before connecting so we can detect
+     * first-time pairing. The receiver is unregistered on disconnect.
+     *
      * @param device The [BluetoothDevice] obtained from scan results.
      */
     fun connect(device: BluetoothDevice) {
@@ -272,8 +371,15 @@ class RtrGattManager(
             name = device.name ?: "Unknown",
             rssi = 0,
         )
+        pendingDevice = rtrDevice
         Timber.i("Connecting to %s (%s)...", rtrDevice.name, rtrDevice.address)
         _connectionState.value = ConnectionState.Connecting
+
+        // Register bond state receiver to handle first-time pairing
+        context.registerReceiver(
+            bondReceiver,
+            IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED),
+        )
 
         // autoConnect = false for direct, fast connection
         gatt = device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
@@ -286,6 +392,7 @@ class RtrGattManager(
     fun disconnect() {
         stopPing()
         gatt?.disconnect()
+        unregisterBondReceiver()
         // closeGatt() is called in onConnectionStateChange when STATE_DISCONNECTED fires
     }
 
@@ -398,6 +505,39 @@ class RtrGattManager(
     }
 
     // -------------------------------------------------------------------------
+    // Registration sequence (ACTIVE / EXPERIMENTAL mode)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Sends the registration sequence to the bike cluster:
+     * 1. User ID packet (`0x52`) — sets the user display name on the cluster
+     * 2. Vehicle name packet (`0x43`) — sets the vehicle display name
+     * 3. Starts the ping loop
+     *
+     * This is the sequence observed in the btsnoop HCI capture (2026-08-16)
+     * that preceded live telemetry streaming from the bike.
+     *
+     * Called from a coroutine after a short delay post-CCCD write.
+     */
+    private fun startRegistration() {
+        Timber.i("Registration: sending user ID and vehicle name")
+
+        val userIdPacket = RegistrationPacketBuilder.buildUserIdPacket(userName)
+        Timber.i("Registration: TX 0x52 user='%s'", userName)
+        writeToCharWrite(userIdPacket)
+
+        val vehicleNamePacket = RegistrationPacketBuilder.buildVehicleNamePacket(vehicleName)
+        Timber.i("Registration: TX 0x43 vehicle='%s'", vehicleName)
+        writeToCharWrite(vehicleNamePacket)
+
+        // Small gap between registration and ping start
+        scope.launch {
+            delay(200L)
+            startPing()
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Notification enable
     // -------------------------------------------------------------------------
 
@@ -451,12 +591,28 @@ class RtrGattManager(
         Timber.e("%s (status=%d)", message, status)
         stopPing()
         closeGatt()
+        unregisterBondReceiver()
         _connectionState.value = ConnectionState.Error(message, status)
     }
 
     private fun closeGatt() {
         gatt?.close()
         gatt = null
+    }
+
+    private fun unregisterBondReceiver() {
+        try {
+            context.unregisterReceiver(bondReceiver)
+        } catch (_: IllegalArgumentException) {
+            // Already unregistered — safe to ignore
+        }
+    }
+
+    private fun bondStateName(state: Int) = when (state) {
+        BluetoothDevice.BOND_NONE    -> "BOND_NONE"
+        BluetoothDevice.BOND_BONDING -> "BOND_BONDING"
+        BluetoothDevice.BOND_BONDED  -> "BOND_BONDED"
+        else                         -> "UNKNOWN($state)"
     }
 
     private fun rtrDeviceFrom(device: BluetoothDevice) = RtrDevice(

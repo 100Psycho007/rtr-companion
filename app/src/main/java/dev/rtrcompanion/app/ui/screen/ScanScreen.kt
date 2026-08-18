@@ -147,12 +147,13 @@ private fun ConnectionStatusBanner(
     onDisconnect: () -> Unit,
 ) {
     val label = when (state) {
-        is ConnectionState.Disconnected       -> return // show nothing
-        is ConnectionState.Connecting         -> "Connecting..."
-        is ConnectionState.Connected          -> "Connected to ${state.device.name}"
-        is ConnectionState.DiscoveringServices-> "Discovering services..."
-        is ConnectionState.Ready              -> "Ready"
-        is ConnectionState.Error              -> "Error: ${state.message}"
+        is ConnectionState.Disconnected        -> return // show nothing
+        is ConnectionState.Connecting          -> "Connecting..."
+        is ConnectionState.Bonding             -> "Pairing with ${state.device.name} — accept the dialog"
+        is ConnectionState.Connected           -> "Connected to ${state.device.name}"
+        is ConnectionState.DiscoveringServices -> "Discovering services..."
+        is ConnectionState.Ready               -> "Ready"
+        is ConnectionState.Error               -> "Error: ${state.message}"
     }
 
     Card(modifier = Modifier.fillMaxWidth()) {

@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import dev.rtrcompanion.blecore.ProtocolMode
 import dev.rtrcompanion.blecore.connection.RtrGattManager
 import dev.rtrcompanion.blecore.model.ConnectionState
 import dev.rtrcompanion.blecore.model.RtrDevice
@@ -38,7 +39,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // -------------------------------------------------------------------------
 
     private val scanner = RtrScanner(application, viewModelScope)
-    private val gattManager = RtrGattManager(application, viewModelScope)
+    private val gattManager = RtrGattManager(
+        context = application,
+        scope = viewModelScope,
+        protocolMode = ProtocolMode.ACTIVE,
+        userName = "RTR Companion",
+        vehicleName = "RTR 310",
+    )
 
     /**
      * Exposed so [dev.rtrcompanion.app.export.PacketExporter] can read the log
